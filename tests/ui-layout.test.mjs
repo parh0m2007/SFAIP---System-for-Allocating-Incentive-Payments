@@ -75,6 +75,12 @@ test('конструктор не требует ввода JSON для поле
   assert.match(app, /data-builder-scale/);
 });
 
+test('новый критерий создаётся без поля для учителя по умолчанию', () => {
+  assert.match(app, /criterionEditor = \{ type: 'fixed',[^}]*fields: \[\]/);
+  assert.match(app, /const fields = c\.fields \|\| \[\];/);
+  assert.doesNotMatch(app, /\{ key: 'field_1', label: '', type: 'TEXT'/);
+});
+
 test('добавление поля сохраняет ранее введённые значения конструктора', () => {
   assert.match(app, /function captureCriterionEditorForm\(/);
   assert.match(app, /captureCriterionEditorForm\(\); criterionEditor\.fields = \[/);
