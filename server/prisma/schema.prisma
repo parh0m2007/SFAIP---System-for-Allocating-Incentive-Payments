@@ -1,0 +1,197 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "sqlite"
+  url = env("DATABASE_URL")
+}
+
+enum Role {
+  TEACHER
+  DEPUTY
+}
+enum ApplicationStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  REJECTED
+}
+enum CriterionType {
+  FIXED
+  QUALITY
+  OLYMPIAD
+  CUSTOM
+}
+enum FieldType {
+  TEXT
+  NUMBER
+  SELECT
+  DATE
+  FILE
+}
+
+model School {
+  id String @id @default(cuid())
+  name String
+  active Boolean @default(true)
+  users User[]
+  criteria Criterion[]
+  applications Application[]
+  auditLogs AuditLog[]
+  createdAt DateTime @default(now())
+}
+model User {
+  id String @id @default(cuid())
+  fullName String
+  email String @unique
+  passwordHash String
+  role Role
+  position String?
+  schoolId String
+  school School @relation(fields:[schoolId], references:[id])
+  refreshTokens RefreshToken[]
+  applications Application[]
+  files EvidenceFile[]
+  notifications Notification[]
+  auditLogs AuditLog[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([schoolId, role])
+}
+model RefreshToken {
+  id String @id @default(cuid())
+  tokenHash String @unique
+  userId String
+  user User @relation(fields:[userId], references:[id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+}
+model Period {
+  id String @id @default(cuid())
+  label String
+  startsAt DateTime
+  endsAt DateTime
+  active Boolean @default(true)
+  applications Application[]
+}
+model Criterion {
+  id String @id @default(cuid())
+  schoolId String
+  school School @relation(fields:[schoolId], references:[id])
+  title String
+  category String
+  type CriterionType
+  amount Int?
+  maxAmount Int @default(0)
+  active Boolean @default(true)
+  version Int @default(1)
+  allowEvidence Boolean @default(false)
+  fields CriterionField[]
+  scales CriterionScale[]
+  items ApplicationItem[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([schoolId, active])
+}
+model CriterionField {
+  id String @id @default(cuid())
+  criterionId String
+  criterion Criterion @relation(fields:[criterionId], references:[id], onDelete: Cascade)
+  key String
+  label String
+  type FieldType
+  required Boolean @default(false)
+  order Int @default(0)
+  optionsJson String?
+}
+model CriterionScale {
+  id String @id @default(cuid())
+  criterionId String
+  criterion Criterion @relation(fields:[criterionId], references:[id], onDelete: Cascade)
+  key String
+  fromValue Float?
+  toValue Float?
+  amount Int
+  metadataJson String?
+}
+model Application {
+  id String @id @default(cuid())
+  teacherId String
+  schoolId String
+  periodId String
+  status ApplicationStatus @default(DRAFT)
+  total Int @default(0)
+  comment String?
+  submittedAt DateTime?
+  decidedAt DateTime?
+  teacher User @relation(fields:[teacherId], references:[id])
+  school School @relation(fields:[schoolId], references:[id])
+  period Period @relation(fields:[periodId], references:[id])
+  items ApplicationItem[]
+  files EvidenceFile[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([teacherId, periodId])
+  @@index([schoolId, status])
+}
+model ApplicationItem {
+  id String @id @default(cuid())
+  applicationId String
+  criterionId String
+  criterionVersion Int
+  titleSnapshot String
+  amount Int @default(0)
+  valuesJson String @default("{}")
+  application Application @relation(fields:[applicationId], references:[id], onDelete: Cascade)
+  criterion Criterion @relation(fields:[criterionId], references:[id])
+  olympiadEntries OlympiadEntry[]
+  files EvidenceFile[]
+}
+model OlympiadEntry {
+  id String @id @default(cuid())
+  itemId String
+  level String
+  diploma String
+  studentName String
+  olympiadName String
+  amount Int @default(0)
+  item ApplicationItem @relation(fields:[itemId], references:[id], onDelete: Cascade)
+}
+model EvidenceFile {
+  id String @id @default(cuid())
+  originalName String
+  mimeType String
+  size Int
+  path String
+  uploadedById String
+  applicationId String
+  itemId String?
+  uploadedBy User @relation(fields:[uploadedById], references:[id])
+  application Application @relation(fields:[applicationId], references:[id], onDelete: Cascade)
+  item ApplicationItem? @relation(fields:[itemId], references:[id])
+  createdAt DateTime @default(now())
+}
+model Notification {
+  id String @id @default(cuid())
+  userId String
+  type String
+  title String
+  body String
+  link String?
+  readAt DateTime?
+  user User @relation(fields:[userId], references:[id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+model AuditLog {
+  id String @id @default(cuid())
+  userId String?
+  schoolId String?
+  action String
+  entity String
+  entityId String?
+  detailsJson String?
+  user User? @relation(fields:[userId], references:[id])
+  school School? @relation(fields:[schoolId], references:[id])
+  createdAt DateTime @default(now())
+}

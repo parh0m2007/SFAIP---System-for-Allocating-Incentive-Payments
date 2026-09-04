@@ -1,0 +1,208 @@
+{
+  "communities": {
+    "0": [
+      "src_app",
+      "src_app_criteriondetail",
+      "src_app_icons",
+      "src_app_olympiadentry",
+      "src_app_state",
+      "src_app_statuslabel",
+      "src_app_statustone",
+      "src_domain_diploma_types",
+      "src_domain_olympiad_levels",
+      "src_domain_quality_bands"
+    ],
+    "1": [
+      "package",
+      "package_name",
+      "package_private",
+      "package_scripts",
+      "package_scripts_test",
+      "package_type",
+      "package_version"
+    ],
+    "2": [
+      "src_app_accountview",
+      "src_app_applicationview",
+      "src_app_criteriaview",
+      "src_app_header",
+      "src_app_render",
+      "src_app_shell",
+      "src_app_staffview"
+    ],
+    "3": [
+      "src_domain",
+      "src_domain_createapplication",
+      "src_domain_decideapplication",
+      "src_domain_defaultstate",
+      "src_domain_loadstate",
+      "src_domain_now",
+      "src_domain_submitapplication"
+    ],
+    "4": [
+      "src_app_badge",
+      "src_app_reportsview",
+      "src_app_reviewdetail",
+      "src_app_reviewview",
+      "src_app_rub",
+      "src_app_userbyid"
+    ],
+    "5": [
+      "src_domain_calculatereward",
+      "src_domain_cancreateapplication",
+      "src_domain_getreviewableapplications",
+      "src_domain_normalizequalitypercentage",
+      "src_domain_updatecriterionamount",
+      "tests_domain_test"
+    ],
+    "6": [
+      "src_app_bind",
+      "src_app_persist",
+      "src_app_setview",
+      "src_app_showtoast",
+      "src_domain_savestate"
+    ],
+    "7": [
+      "src_app_recalculateapplication",
+      "src_domain_calculateolympiadtotal",
+      "src_domain_getapplicationvalidationerrors",
+      "src_domain_getolympiadreward",
+      "src_domain_getqualityband"
+    ],
+    "8": [
+      "tests_ui_layout_test",
+      "tests_ui_layout_test_app",
+      "tests_ui_layout_test_index",
+      "tests_ui_layout_test_styles"
+    ],
+    "9": [
+      "src_app_stat",
+      "src_app_teacheroverview"
+    ]
+  },
+  "cohesion": {
+    "0": 0.2222222222222222,
+    "1": 0.2857142857142857,
+    "2": 0.5714285714285714,
+    "3": 0.47619047619047616,
+    "4": 0.6666666666666666,
+    "5": 0.4,
+    "6": 0.5,
+    "7": 0.4,
+    "8": 0.5,
+    "9": 1.0
+  },
+  "gods": [
+    {
+      "id": "src_app_bind",
+      "label": "bind()",
+      "degree": 13
+    },
+    {
+      "id": "src_app_render",
+      "label": "render()",
+      "degree": 11
+    },
+    {
+      "id": "src_app_reviewview",
+      "label": "reviewView()",
+      "degree": 10
+    },
+    {
+      "id": "src_app_rub",
+      "label": "rub()",
+      "degree": 8
+    },
+    {
+      "id": "src_app_shell",
+      "label": "shell()",
+      "degree": 8
+    },
+    {
+      "id": "src_app_header",
+      "label": "header()",
+      "degree": 8
+    },
+    {
+      "id": "src_app_badge",
+      "label": "badge()",
+      "degree": 8
+    },
+    {
+      "id": "src_app_reportsview",
+      "label": "reportsView()",
+      "degree": 8
+    },
+    {
+      "id": "src_app_teacheroverview",
+      "label": "teacherOverview()",
+      "degree": 7
+    },
+    {
+      "id": "src_app_applicationview",
+      "label": "applicationView()",
+      "degree": 7
+    }
+  ],
+  "surprises": [
+    {
+      "source": "criterionDetail()",
+      "target": "getQualityBand()",
+      "source_files": [
+        "src/app.js",
+        "src/domain.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    },
+    {
+      "source": "reviewView()",
+      "target": "getReviewableApplications()",
+      "source_files": [
+        "src/app.js",
+        "src/domain.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    },
+    {
+      "source": "reportsView()",
+      "target": "getReviewableApplications()",
+      "source_files": [
+        "src/app.js",
+        "src/domain.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    },
+    {
+      "source": "bind()",
+      "target": "decideApplication()",
+      "source_files": [
+        "src/app.js",
+        "src/domain.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    },
+    {
+      "source": "bind()",
+      "target": "getApplicationValidationErrors()",
+      "source_files": [
+        "src/app.js",
+        "src/domain.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    }
+  ],
+  "tokens": {
+    "input": 0,
+    "output": 0
+  }
+}

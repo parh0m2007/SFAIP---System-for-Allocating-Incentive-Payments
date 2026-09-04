@@ -1,0 +1,32 @@
+{
+  "package.json": {
+    "mtime": 1788077221.533761,
+    "seen": 1788361308.996738,
+    "ast_hash": "0df9fe15ce0c42d9ba5c763ee8a0f4ac",
+    "semantic_hash": "0df9fe15ce0c42d9ba5c763ee8a0f4ac"
+  },
+  "src/app.js": {
+    "mtime": 1788290215.8755977,
+    "seen": 1788361308.9967418,
+    "ast_hash": "6d8010ba20bda4d13a1c09716c5b659d",
+    "semantic_hash": "6d8010ba20bda4d13a1c09716c5b659d"
+  },
+  "src/domain.js": {
+    "mtime": 1788290190.021112,
+    "seen": 1788361308.996744,
+    "ast_hash": "0f95d43a4828b7622e5ca00d8da64aac",
+    "semantic_hash": "0f95d43a4828b7622e5ca00d8da64aac"
+  },
+  "tests/domain.test.mjs": {
+    "mtime": 1788290155.2532408,
+    "seen": 1788361308.9967449,
+    "ast_hash": "353ca57d817566ae5fd63d5bc2860707",
+    "semantic_hash": "353ca57d817566ae5fd63d5bc2860707"
+  },
+  "tests/ui-layout.test.mjs": {
+    "mtime": 1788350147.0294104,
+    "seen": 1788361308.996746,
+    "ast_hash": "d0f275f4ec6f9455d755a0bcceae8e90",
+    "semantic_hash": "d0f275f4ec6f9455d755a0bcceae8e90"
+  }
+}
