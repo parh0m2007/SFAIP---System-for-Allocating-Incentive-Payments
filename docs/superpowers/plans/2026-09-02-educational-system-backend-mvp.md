@@ -1,6 +1,6 @@
 # Educational System Backend MVP Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Replace the demo-only localStorage flow with a locally runnable SQLite backend and connect the existing educational-system UI to it.
 
@@ -31,12 +31,12 @@
 - `GET/PATCH /api/profile`
 - Prisma models from the approved spec with enums for roles, statuses, field types, and criterion types.
 
-- [ ] Add NestJS/Prisma dependencies and scripts (`server:dev`, `db:migrate`, `seed`, `test:server`).
-- [ ] Implement Prisma schema, migration, and deterministic seed containing two schools, one deputy per school, teachers, a period, and starter criteria.
-- [ ] Implement bcrypt password hashing, signed access JWTs, hashed refresh tokens, logout revocation, and auth guard that attaches `{ userId, role, schoolId }`.
-- [ ] Implement registration validation including existing-school lookup and one-deputy constraint; never return password fields.
-- [ ] Implement profile read/update with school and role read-only.
-- [ ] Run the auth integration test against a temporary SQLite database and verify `npm test` still passes.
+- [x] Add NestJS/Prisma dependencies and scripts (`server:dev`, `db:migrate`, `seed`, `test:server`).
+- [x] Implement Prisma schema, migration, and deterministic seed containing two schools, one deputy per school, teachers, a period, and starter criteria.
+- [x] Implement bcrypt password hashing, signed access JWTs, hashed refresh tokens, logout revocation, and auth guard that attaches `{ userId, role, schoolId }`.
+- [x] Implement registration validation including existing-school lookup and one-deputy constraint; never return password fields.
+- [x] Implement profile read/update with school and role read-only.
+- [x] Run the auth integration test against a temporary SQLite database and verify `npm test` still passes.
 
 ### Task 2: Criteria constructor and server-side calculation
 
@@ -50,11 +50,11 @@
 - `POST/PATCH/DELETE /api/criteria` (deputy only, school scoped)
 - DTOs support custom fields, quality percentage bands, olympiad level/diploma amounts, max amount, and `allowEvidence`.
 
-- [ ] Add criterion, field, scale, and version persistence with transactionally created versions.
-- [ ] Validate non-overlapping percentage bands, non-negative amounts, field definitions, and immutable historical snapshots.
-- [ ] Return active criteria to teachers and full school criteria to deputies.
-- [ ] Add soft-delete behavior when a criterion has been used by an application.
-- [ ] Cover deputy-only access, school isolation, and quality/olympiad calculations with focused tests.
+- [x] Add criterion, field, scale, and version persistence with transactionally created versions.
+- [x] Validate non-overlapping percentage bands, non-negative amounts, field definitions, and immutable historical snapshots.
+- [x] Return active criteria to teachers and full school criteria to deputies.
+- [x] Add soft-delete behavior when a criterion has been used by an application.
+- [x] Cover deputy-only access, school isolation, and quality/olympiad calculations with focused tests.
 
 ### Task 3: Applications and review workflow
 
@@ -68,12 +68,12 @@
 - `GET /api/reviews`, `POST /api/reviews/:id/approve`, `POST /api/reviews/:id/reject`
 - `GET /api/notifications`, `POST /api/notifications/:id/read`
 
-- [ ] Enforce `(teacherId, periodId)` uniqueness and draft/rejected edit rules.
-- [ ] Persist application-item snapshots and dynamic values, olympiad entries, totals, and evidence links.
-- [ ] Recalculate totals on every write and validate quality/olympiad/custom fields on submit.
-- [ ] Implement atomic approve/reject transitions scoped to deputy school; reject requires a comment and resubmission clears the old decision.
-- [ ] Create notifications for submit, approve, reject; add read endpoints and audit records.
-- [ ] Run the workflow smoke test covering cross-school denial and rejected resubmission.
+- [x] Enforce `(teacherId, periodId)` uniqueness and draft/rejected edit rules.
+- [x] Persist application-item snapshots and dynamic values, olympiad entries, totals, and evidence links.
+- [x] Recalculate totals on every write and validate quality/olympiad/custom fields on submit.
+- [x] Implement atomic approve/reject transitions scoped to deputy school; reject requires a comment and resubmission clears the old decision.
+- [x] Create notifications for submit, approve, reject; add read endpoints and audit records.
+- [x] Run the workflow smoke test covering cross-school denial and rejected resubmission.
 
 ### Task 4: Files and Excel reporting
 
@@ -85,9 +85,9 @@
 - `POST /api/files` multipart upload, `GET /api/files/:id` download
 - `GET /api/reports/:periodId/export.xlsx`
 
-- [ ] Validate MIME/extension allowlist and size, generate UUID filenames, store metadata, and enforce application/school access on download.
-- [ ] Generate an `.xlsx` workbook with applications, criteria, and totals sheets; include only approved applications in the deputy's school.
-- [ ] Add an audit entry for uploads and exports and test unauthorized download/export paths.
+- [x] Validate MIME/extension allowlist and size, generate UUID filenames, store metadata, and enforce application/school access on download.
+- [x] Generate an `.xlsx` workbook with applications, criteria, and totals sheets; include only approved applications in the deputy's school.
+- [x] Add an audit entry for uploads and exports and test unauthorized download/export paths.
 
 ### Task 5: Frontend API integration and local launch
 
@@ -100,8 +100,8 @@
 - API client methods for auth, profile, criteria, applications, files, reports, and notifications.
 - Existing render functions consume API-loaded state while preserving current fallback demo state when API is unavailable.
 
-- [ ] Add token-aware fetch client with one refresh attempt on 401 and normalized `{ code, message, details }` errors.
-- [ ] Replace teacher/deputy demo mutations with API calls for auth/profile, criteria, applications, review, upload, notifications, and export.
-- [ ] Keep responsive layout fixes, fixed-currency rendering, and school-scoped lists intact.
-- [ ] Document exact no-Docker commands, default seeded accounts, ports, and migration/reset instructions.
-- [ ] Run one final smoke command: server starts, seeded login works, a teacher submits, deputy approves, and export returns XLSX; then run the existing frontend tests.
+- [x] Add token-aware fetch client with one refresh attempt on 401 and normalized `{ code, message, details }` errors.
+- [x] Replace teacher/deputy demo mutations with API calls for auth/profile, criteria, applications, review, upload, notifications, and export.
+- [x] Keep responsive layout fixes, fixed-currency rendering, and school-scoped lists intact.
+- [x] Document exact no-Docker commands, default seeded accounts, ports, and migration/reset instructions.
+- [x] Run one final smoke command: server starts, seeded login works, a teacher submits, deputy approves, and export returns XLSX; then run the existing frontend tests.

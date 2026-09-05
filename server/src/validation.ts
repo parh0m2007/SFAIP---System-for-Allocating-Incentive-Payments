@@ -8,6 +8,16 @@ const CRITERION_TYPES = new Set(Object.values(CriterionType));
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const fail = (code: string, message: string): never => { throw new BadRequestException({ code, message }); };
+
+export function assertPeriodPayload(payload: any) {
+  const label = String(payload?.label || '').trim();
+  if (!label || label.length > 160) fail('PERIOD_INVALID', 'Укажите название периода (до 160 символов)');
+  const startsAt = new Date(payload?.startsAt);
+  const endsAt = new Date(payload?.endsAt);
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) fail('PERIOD_INVALID', 'Укажите даты начала и окончания периода');
+  if (startsAt >= endsAt) fail('PERIOD_INVALID', 'Дата окончания должна быть позже даты начала');
+}
+
 export function assertTeacherRole(role: unknown): asserts role is typeof Role.TEACHER {
   if (role !== Role.TEACHER) fail('TEACHER_ONLY', 'Операция доступна только учителю');
 }
@@ -67,6 +77,12 @@ export function assertCriterionPayload(payload: any) {
   scales.filter((scale: any) => !ranges.includes(scale)).forEach((scale: any) => {
     if (!String(scale?.key || '').trim()) fail('SCALES_INVALID', 'Укажите ключ шкалы');
     amount(Number(scale.amount), maxAmount, 'SCALES_INVALID');
+  });
+  const scaleKeys = new Set<string>();
+  scales.forEach((scale: any) => {
+    const key = String(scale?.key || '').trim();
+    if (key && scaleKeys.has(key)) fail('SCALES_INVALID', `Шкала «${key}» указана повторно`);
+    if (key) scaleKeys.add(key);
   });
 }
 

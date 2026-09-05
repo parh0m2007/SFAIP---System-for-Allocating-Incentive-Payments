@@ -8,7 +8,7 @@
     "db:migrate": "prisma migrate dev --name init",
     "db:generate": "prisma generate",
     "seed": "node --import tsx prisma/seed.ts",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test \"test/*.test.ts\" \"test/*.e2e-spec.ts\""
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",

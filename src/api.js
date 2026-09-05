@@ -163,6 +163,9 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
     getProfile: () => request('/api/profile'),
     updateProfile: (data) => request('/api/profile', { method: 'PATCH', body: data }),
     listCriteria: () => request('/api/criteria'),
+    listPeriods: () => request('/api/periods'),
+    createPeriod: (data) => request('/api/periods', { method: 'POST', body: data }),
+    closePeriod: (id) => request(`/api/periods/${encodeURIComponent(id)}`, { method: 'PATCH', body: { active: false } }),
     listUsers: () => request('/api/users'),
     createCriterion: (data) => request('/api/criteria', { method: 'POST', body: data }),
     updateCriterion: (id, data) => request(`/api/criteria/${encodeURIComponent(id)}`, { method: 'PATCH', body: data }),
@@ -196,6 +199,7 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
   client.schools = { list: client.listSchools };
   client.profile = { get: client.getProfile, update: client.updateProfile };
   client.criteria = { list: client.listCriteria, create: client.createCriterion, update: client.updateCriterion, updateStatus: client.updateCriterionStatus, delete: client.deleteCriterion };
+  client.periods = { list: client.listPeriods, create: client.createPeriod, close: client.closePeriod };
   client.users = { list: client.listUsers };
   client.getCriteria = client.listCriteria;
   client.applications = { list: client.listApplications, create: client.createApplication, get: client.getApplication, update: client.updateApplication, submit: client.submitApplication };
@@ -219,7 +223,7 @@ export const api = createApi();
 export default api;
 
 export const { register, login, refresh, logout, getProfile, updateProfile, listCriteria, createCriterion, updateCriterion, updateCriterionStatus, deleteCriterion,
-  listSchools,
+  listSchools, listPeriods, createPeriod, closePeriod,
   listUsers,
   listApplications, createApplication, getApplication, updateApplication, submitApplication, listReviews, approveReview, rejectReview,
   listNotifications, markNotificationRead, uploadFile, downloadFile, exportReport } = api;

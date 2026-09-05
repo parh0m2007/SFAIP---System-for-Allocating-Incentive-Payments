@@ -15,6 +15,14 @@ test('критерий отклоняет пересекающиеся диап�
   assert.equal(result?.code, 'SCALES_INVALID');
 });
 
+test('олимпиадные шкалы отклоняют дубликаты ключей', () => {
+  const result = responseOf(() => assertCriterionPayload({
+    title: 'Олимпиады', category: 'Результаты', type: 'OLYMPIAD', maxAmount: 7000,
+    scales: [{ key: 'municipal:winner', amount: 1000 }, { key: 'municipal:winner', amount: 2000 }], fields: [],
+  }));
+  assert.equal(result?.code, 'SCALES_INVALID');
+});
+
 test('поля конструктора должны иметь уникальные ключи и допустимый тип', () => {
   const result = responseOf(() => assertCriterionPayload({
     title: 'Критерий', category: 'Другое', type: 'CUSTOM', maxAmount: 1000,
