@@ -65,11 +65,19 @@ test('конструктор показывает статистику испо�
   assert.match(app, /версия \$\{c\.version\}/);
 });
 
-test('ключ поля генерируется из названия автоматически', () => {
-  assert.match(app, /const slugify = \(label\) =>/);
-  assert.match(app, /key: slugify\(/);
+test('ключ поля генерируется из названия автоматически, кириллица транслитерируется', () => {
+  assert.match(app, /const slugify = \(label\) => \{/);
+  assert.match(app, /const CYRILLIC_MAP = \{ а: 'a'/);
+  assert.match(app, /komentariy|nazvanie/);
+  assert.match(app, /const uniqueKeys = \(fields\) => \{/);
+  assert.match(app, /criterionEditor\.fields = uniqueKeys\(/);
   assert.doesNotMatch(app, /data-field-key value=/);
   assert.doesNotMatch(app, /name="fields"[^>]*textarea/);
+});
+
+test('одинаковые названия полей получают суффикс вместо ошибки', () => {
+  assert.match(app, /\`\$\{base\}_\$\{count\}\`/);
+  assert.doesNotMatch(app, /Два поля имеют одинаковое название/);
 });
 
 test('олимпиадные шкалы не допускают дубликаты уровней и дипломов', () => {

@@ -301,13 +301,30 @@ function captureCriterionEditorForm() {
       options: (row.querySelector('[data-field-options]')?.value || '').split(',').map((value) => value.trim()).filter(Boolean),
     })),
   };
-  criterionEditor.fields = criterionEditor.fields.map((field) => ({ ...field, key: slugify(field.label) }));
+  criterionEditor.fields = uniqueKeys(criterionEditor.fields);
   const type = String(criterionEditor.type).toUpperCase();
   if (type === 'QUALITY') criterionEditor.qualityBands = [...form.querySelectorAll('[data-builder-scale]')].map((row) => ({ from: Number(row.querySelector('[data-scale-from]')?.value || 0), to: Number(row.querySelector('[data-scale-to]')?.value || 0), amount: Number(row.querySelector('[data-scale-amount]')?.value || 0) }));
   else if (type === 'OLYMPIAD') criterionEditor.scales = [...form.querySelectorAll('[data-builder-scale]')].map((row) => ({ key: `${row.querySelector('[data-scale-level]')?.value || 'municipal'}:${row.querySelector('[data-scale-diploma]')?.value || 'winner'}`, amount: Number(row.querySelector('[data-scale-amount]')?.value || 0) }));
 }
 
-const slugify = (label) => String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^(\d)/, 'f$1').slice(0, 40) || 'field';
+// Transliterate Cyrillic so a Russian field label ("Комментарий") produces a valid
+// Latin key ("komentariy") instead of the generic "field" fallback that collides.
+const CYRILLIC_MAP = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya' };
+const slugify = (label) => {
+  const transliterated = String(label || '').toLowerCase().split('').map((char) => CYRILLIC_MAP[char] ?? char).join('');
+  const slug = transliterated.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^(\d)/, 'f$1').slice(0, 40);
+  return slug || 'field';
+};
+// Identical labels (e.g. two "Название") get "_2"/"_3" suffixes instead of a hard error.
+const uniqueKeys = (fields) => {
+  const seen = new Map();
+  return (fields || []).map((field) => {
+    const base = slugify(field.label);
+    const count = (seen.get(base) || 0) + 1;
+    seen.set(base, count);
+    return { ...field, key: count === 1 ? base : `${base}_${count}` };
+  });
+};
 
 // Mirror server-side rules before submit so the deputy sees problems inline,
 // right in the constructor, instead of a toast after a failed request.
@@ -319,13 +336,9 @@ function criterionEditorErrors(c) {
   if (!(maxAmount >= 0) || maxAmount > 1_000_000) return { form: 'Максимум должен быть целым числом от 0 до 1 000 000 ₽' };
   if (c.amount != null && c.amount !== '' && (Number(c.amount) < 0 || Number(c.amount) > maxAmount)) return { form: `Фиксированная сумма должна быть от 0 до ${maxAmount} ₽` };
   const fields = c.fields || [];
-  const seenKeys = new Set();
   for (const field of fields) {
     if (!String(field.label || '').trim()) return { form: 'У каждого поля для учителя должно быть название' };
     if (String(field.type).toUpperCase() === 'SELECT' && !(field.options || []).length) return { form: `Для списка «${field.label}» задайте варианты выбора` };
-    const key = slugify(field.label);
-    if (seenKeys.has(key)) return { form: `Два поля имеют одинаковое название — ключ «${key}» повторяется` };
-    seenKeys.add(key);
   }
   if (type === 'QUALITY') {
     const bands = c.qualityBands || [];
@@ -445,7 +458,7 @@ function bind() {
   document.querySelector('[data-criterion-form] select[name="type"]')?.addEventListener('change', (event) => { captureCriterionEditorForm(); criterionEditor.type = event.target.value; if (criterionEditor.type === 'quality' && !criterionEditor.qualityBands?.length) criterionEditor.qualityBands = QUALITY_BANDS.map((band) => ({ ...band })); render(); });
   document.querySelector('[data-criterion-form]')?.addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const type = String(data.get('type') || 'fixed').toUpperCase();
-    const fields = [...form.querySelectorAll('[data-builder-field]')].map((row, index) => ({ key: slugify(row.querySelector('[data-field-label]')?.value.trim() || `Поле ${index + 1}`), label: row.querySelector('[data-field-label]')?.value.trim() || `Поле ${index + 1}`, type: row.querySelector('[data-field-type]')?.value || 'TEXT', required: Boolean(row.querySelector('[data-field-required]')?.checked), options: (row.querySelector('[data-field-options]')?.value || '').split(',').map((value) => value.trim()).filter(Boolean) }));
+    const fields = uniqueKeys([...form.querySelectorAll('[data-builder-field]')].map((row, index) => ({ label: row.querySelector('[data-field-label]')?.value.trim() || `Поле ${index + 1}`, type: row.querySelector('[data-field-type]')?.value || 'TEXT', required: Boolean(row.querySelector('[data-field-required]')?.checked), options: (row.querySelector('[data-field-options]')?.value || '').split(',').map((value) => value.trim()).filter(Boolean) })));
     let scales = [...form.querySelectorAll('[data-builder-scale]')].map((row) => type === 'QUALITY' ? ({ from: Number(row.querySelector('[data-scale-from]')?.value || 0), to: Number(row.querySelector('[data-scale-to]')?.value || 0), amount: Number(row.querySelector('[data-scale-amount]')?.value || 0) }) : type === 'OLYMPIAD' ? ({ key: `${row.querySelector('[data-scale-level]')?.value || 'municipal'}:${row.querySelector('[data-scale-diploma]')?.value || 'winner'}`, amount: Number(row.querySelector('[data-scale-amount]')?.value || 0) }) : null).filter(Boolean);
     if (type === 'QUALITY' && !scales.length) scales = QUALITY_BANDS.map((band) => ({ ...band }));
     const draft = { ...criterionEditor, type: String(data.get('type') || 'fixed').toLowerCase(), title: String(data.get('title') || '').trim(), category: String(data.get('category') || '').trim(), maxAmount: Number(data.get('maxAmount') || 0), amount: data.get('amount') === '' || data.get('amount') == null ? null : Number(data.get('amount')), allowEvidence: data.get('allowEvidence') === 'on', fields, ...(type === 'QUALITY' ? { qualityBands: scales } : {}), scales };
