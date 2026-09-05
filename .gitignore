@@ -7,3 +7,6 @@ server/data/*.db
 data/
 storage/
 .DS_Store
+
+# graphify local graph artifacts
+graphify-out/
