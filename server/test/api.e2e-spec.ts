@@ -30,7 +30,8 @@ async function withServer(run: () => Promise<void>) {
     }
     await run();
   } finally {
-    proc.kill('SIGKILL');
+    // Windows has no SIGKILL; proc.kill() falls back to TerminateProcess there.
+    proc.kill(process.platform === 'win32' ? undefined : 'SIGKILL');
     rmSync(dir, { recursive: true, force: true });
   }
 }

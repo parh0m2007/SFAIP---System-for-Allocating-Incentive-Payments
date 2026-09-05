@@ -274,8 +274,11 @@ async function ensureDatabase() {
   const dbFile = path.resolve(process.cwd(), 'prisma', match[1]);
   if (existsSync(dbFile)) return;
   const { execFileSync } = await import('node:child_process');
-  execFileSync('npx', ['prisma', 'migrate', 'deploy'], { cwd: process.cwd(), stdio: 'ignore' });
-  execFileSync('npm', ['run', 'seed'], { cwd: process.cwd(), stdio: 'ignore' });
+  // On Windows npx/npm are .cmd shims, not executables - shell:true is required to spawn them.
+  const isWindows = process.platform === 'win32';
+  const run = (cmd: string, args: string[]) => execFileSync(cmd, args, { cwd: process.cwd(), stdio: 'ignore', shell: isWindows });
+  run('npx', ['prisma', 'migrate', 'deploy']);
+  run('npm', ['run', 'seed']);
   console.log('Database created and seeded automatically');
 }
 bootstrap();
