@@ -2,7 +2,16 @@
 
 UI и локальный backend MVP по ТЗ. Backend запускается без Docker на NestJS + Prisma + SQLite.
 
-## Запуск
+## Запуск в Docker (production)
+
+```bash
+cp .env.example .env   # задайте JWT-секреты и (опционально) Brevo
+docker compose up -d --build
+```
+
+Фронтенд: `http://localhost`, API за тем же доменом (`/api`). Подробная поэтапная инструкция для Ubuntu — [DEPLOY.md](DEPLOY.md).
+
+## Запуск без Docker (локальная разработка)
 
 ```bash
 python3 -m http.server 4173

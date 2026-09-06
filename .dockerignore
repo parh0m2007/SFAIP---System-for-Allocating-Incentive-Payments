@@ -1,0 +1,14 @@
+node_modules
+server/node_modules
+server/dist
+server/.env
+server/data
+server/storage
+data
+storage
+graphify-out
+tests
+docs
+*.db
+.DS_Store
+.git
