@@ -89,28 +89,47 @@ curl http://localhost/api/schools
 
 ## 6. HTTPS через Let's Encrypt (если есть домен)
 
+Ничего редактировать вручную не нужно — в репозитории есть готовый HTTPS-оверлей (`docker-compose.https.yml` + `nginx-ssl.conf`). Домен подставляется из `.env`.
+
+Шаг 1. Выпустите сертификат (перед этим остановите всё, что занимает порт 80):
+
 ```bash
+docker compose stop frontend 2>/dev/null   # освободить порт 80, если уже запущено
 sudo apt install -y certbot
 sudo certbot certonly --standalone -d ВАШ_ДОМЕН
 ```
 
-Добавьте в `docker-compose.yml` в сервис `frontend`:
+Шаг 2. Добавьте домен в `.env` (файл в корне проекта):
 
-```yaml
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+```
+DOMAIN=ВАШ_ДОМЕН
+CORS_ORIGINS=https://ВАШ_ДОМЕН
 ```
 
-И расширьте `nginx.conf` (серверный блок 443 с сертификатами + редирект 80→443), затем:
+Шаг 3. Запустите с HTTPS-оверлеем (два файла `-f` — единственное отличие от обычного запуска):
 
 ```bash
-docker compose up -d --build frontend
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
 ```
 
-Обновление сертификатов — в cron: `0 3 * * * certbot renew --quiet && cd /opt/sfaip/app && docker compose restart frontend`
+Что произойдёт: nginx начнёт слушать 443 с сертификатами из `/etc/letsencrypt` (монтируется read-only), весь http-трафик будет редиректить на https, а путь `/.well-known/acme-challenge/` останется открытым для обновления сертификатов.
+
+Проверка: `https://ВАШ_ДОМЕН` — замок в браузере, `curl -I http://ВАШ_ДОМЕН` — должен вернуть `301` на https.
+
+Шаг 4. Автообновление сертификатов — в cron:
+
+```bash
+sudo crontab -e
+# добавьте строку:
+0 3 * * * certbot renew --quiet --deploy-hook "docker restart $(docker ps -qf name=frontend)"
+```
+
+## 6a. Вернуться с HTTPS на обычный HTTP
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.https.yml down
+docker compose up -d
+```
 
 ## 7. Email-уведомления Brevo (если нужен шаг)
 

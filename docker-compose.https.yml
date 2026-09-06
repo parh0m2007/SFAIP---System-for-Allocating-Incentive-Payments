@@ -1,0 +1,16 @@
+# HTTPS overlay: docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+# 1) Issue certificates first: sudo certbot certonly --standalone -d ВАШ_ДОМЕН
+# 2) Put DOMAIN=ВАШ_ДОМЕН into .env
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        NGINX_CONF: nginx-ssl.conf
+        DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
