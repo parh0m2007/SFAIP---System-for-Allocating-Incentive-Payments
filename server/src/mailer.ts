@@ -22,7 +22,8 @@ export function mailerFromEnv(env: NodeJS.ProcessEnv = process.env) {
       const response = await fetch(BREVO_ENDPOINT, {
         method: 'POST',
         headers: { 'api-key': apiKey, 'Content-Type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ sender: { email: fromEmail, name: fromName }, ...payload }),
+        // Brevo's API expects htmlContent/textContent, not html/text.
+        body: JSON.stringify({ sender: { email: fromEmail, name: fromName }, subject: payload.subject, to: payload.to, htmlContent: payload.html, ...(payload.text ? { textContent: payload.text } : {}) }),
       });
       if (!response.ok) {
         console.warn(`[mailer] Brevo responded ${response.status}: ${await response.text().catch(() => '')}`);

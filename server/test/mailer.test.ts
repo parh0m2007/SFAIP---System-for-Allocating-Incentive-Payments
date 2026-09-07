@@ -8,6 +8,29 @@ test('mailer отключён без ключей Brevo и не падает п�
   assert.equal(await mailer.send({ to: [{ email: 'a@b.ru' }], subject: 'x', html: 'x' }), false);
 });
 
+test('отправка использует поля Brevo API: htmlContent/textContent и sender', async () => {
+  const calls: any[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: any, options: any) => {
+    calls.push(JSON.parse(options.body));
+    return new Response('{"messageId":"test"}', { status: 200 });
+  }) as any;
+  try {
+    const mailer = mailerFromEnv({ BREVO_API_KEY: 'k', BREVO_SENDER_EMAIL: 'noreply@x.ru', BREVO_SENDER_NAME: 'Школа' } as NodeJS.ProcessEnv);
+    const ok = await mailer.send({ to: [{ email: 'user@y.ru', name: 'Иван' }], subject: 'Тема', html: '<b>текст</b>', text: 'текст' });
+    assert.equal(ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].htmlContent, '<b>текст</b>');
+    assert.equal(calls[0].textContent, 'текст');
+    assert.equal(calls[0].subject, 'Тема');
+    assert.deepEqual(calls[0].sender, { email: 'noreply@x.ru', name: 'Школа' });
+    assert.deepEqual(calls[0].to, [{ email: 'user@y.ru', name: 'Иван' }]);
+    assert.ok(!('html' in calls[0]) && !('text' in calls[0]), 'старые имена html/text не должны попадать в запрос');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('mailer включён только при наличии ключа и отправителя', () => {
   assert.equal(mailerFromEnv({ BREVO_API_KEY: 'k' } as NodeJS.ProcessEnv).enabled, false);
   assert.equal(mailerFromEnv({ BREVO_SENDER_EMAIL: 'a@b.ru' } as NodeJS.ProcessEnv).enabled, false);
