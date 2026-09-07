@@ -83,10 +83,9 @@ test('полный smoke-сценарий: auth, периоды, критери�
   deputyToken = deputyLogin.body.accessToken;
   accessToken = deputyToken;
 
-  // 3. Second deputy for the same school is rejected.
+  // 3. Multiple deputies per school are allowed.
   const deputyAgain = await api('/api/auth/register', { method: 'POST', body: { email: 'deputy2-e2e@e2e.test', password: 'e2ePass123', fullName: 'E2E Deputy 2', schoolId, role: 'DEPUTY' }, token: false });
-  assert.equal(deputyAgain.status, 400);
-  assert.equal(deputyAgain.body.code, 'DEPUTY_EXISTS');
+  assert.ok(deputyAgain.ok, `second deputy register failed: ${JSON.stringify(deputyAgain.body)}`);
 
   // 4. Teacher registers, logs in, profile is readable.
   const teacher = await api('/api/auth/register', { method: 'POST', body: student('teacher1'), token: false });

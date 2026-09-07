@@ -47,7 +47,6 @@ export class ApiController {
     if (!Object.values(Role).includes(b.role)) throw new BadRequestException({ code: 'ROLE_INVALID', message: 'Недопустимая роль' });
     const school = await this.db.school.findUnique({ where: { id: b.schoolId } });
     if (!school?.active) throw new BadRequestException({ code: 'SCHOOL_INVALID', message: 'Школа не найдена' });
-    if (b.role === Role.DEPUTY && await this.db.user.findFirst({ where: { schoolId: school.id, role: Role.DEPUTY } })) throw new BadRequestException({ code: 'DEPUTY_EXISTS', message: 'В школе уже зарегистрирован завуч' });
     if (await this.db.user.findUnique({ where: { email: String(b.email).trim().toLowerCase() } })) throw new BadRequestException({ code: 'EMAIL_EXISTS', message: 'Пользователь с таким email уже зарегистрирован' });
     const user = await this.db.user.create({ data: { fullName: b.fullName.trim(), email: b.email.trim().toLowerCase(), passwordHash: await bcrypt.hash(b.password, 12), role: b.role, position: b.position || null, schoolId: school.id }, include: { school: true } });
     const result = await this.issueTokens(user);
