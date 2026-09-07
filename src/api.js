@@ -32,6 +32,9 @@ function defaultStorage() {
 }
 
 function normalizeBaseUrl(value) {
+  // '' and '/' mean same-origin (production behind nginx); keep them empty so
+  // request paths become relative URLs instead of falling back to localhost.
+  if (value === '' || value === '/') return '';
   return String(value || DEFAULT_BASE_URL).replace(/\/+$/, '');
 }
 
@@ -71,7 +74,7 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
   const requestFetch = fetchImpl || globalThis.fetch?.bind(globalThis);
   if (!requestFetch) throw new Error('fetch is not available');
   const tokenStorage = storage || defaultStorage();
-  const root = normalizeBaseUrl(baseUrl || globalThis.API_BASE_URL);
+  const root = normalizeBaseUrl(baseUrl ?? globalThis.API_BASE_URL ?? DEFAULT_BASE_URL);
 
   const getAccessToken = () => tokenStorage.getItem(ACCESS_TOKEN_KEY);
   const getRefreshToken = () => tokenStorage.getItem(REFRESH_TOKEN_KEY);
