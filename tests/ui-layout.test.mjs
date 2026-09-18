@@ -52,6 +52,38 @@ test('завучские решения и документы подключен
   assert.match(app, /api\.uploadFile\(file, a\.id, item\.id\)/);
 });
 
+test('интерфейс обращается к заместителю директора, а не к завучу', () => {
+  assert.match(app, /Заместитель директора/);
+  assert.doesNotMatch(app, /завуч/);
+  assert.doesNotMatch(app, /Завуч/);
+});
+
+test('строки критериев в заявке кликабельны и открывают шкалу', () => {
+  assert.match(app, /data-toggle-row="\$\{c\.id\}"/);
+  assert.match(app, /role="button" tabindex="0"/);
+  assert.match(styles, /\.criterion-row\{cursor:pointer/);
+});
+
+test('отклонённые и ошибочные заявки можно удалять', () => {
+  assert.match(app, /api\.deleteApplication\(a\.id\)/);
+  assert.match(app, /data-delete-application="\$\{app\.id\}"/);
+  assert.match(app, /data-action="delete-application"/);
+});
+
+test('выплаты масштабируются коэффициентом фонда периода', () => {
+  assert.match(app, /calculatePayouts\(/);
+  assert.match(app, /data-action="save-fund"/);
+  assert.match(app, /Фонд /);
+  assert.match(app, /Коэффициент K/);
+});
+
+test('качество обученности зависит от категории педагога', () => {
+  assert.match(app, /TEACHER_CATEGORIES/);
+  assert.match(app, /DEFAULT_CATEGORY_BANDS/);
+  assert.match(app, /categoryBands/);
+  assert.match(app, /data-profile-category/);
+});
+
 test('конструктор критериев содержит форму создания и редактирования', () => {
   assert.match(app, /data-action="new-criterion"/);
   assert.match(app, /data-criterion-form/);

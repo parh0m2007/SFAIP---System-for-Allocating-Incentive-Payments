@@ -83,9 +83,10 @@ test('полный smoke-сценарий: auth, периоды, критери�
   deputyToken = deputyLogin.body.accessToken;
   accessToken = deputyToken;
 
-  // 3. Multiple deputies per school are allowed.
+  // 3. Second deputy for the same school is rejected.
   const deputyAgain = await api('/api/auth/register', { method: 'POST', body: { email: 'deputy2-e2e@e2e.test', password: 'e2ePass123', fullName: 'E2E Deputy 2', schoolId, role: 'DEPUTY' }, token: false });
-  assert.ok(deputyAgain.ok, `second deputy register failed: ${JSON.stringify(deputyAgain.body)}`);
+  assert.equal(deputyAgain.status, 400);
+  assert.equal(deputyAgain.body.code, 'DEPUTY_EXISTS');
 
   // 4. Teacher registers, logs in, profile is readable.
   const teacher = await api('/api/auth/register', { method: 'POST', body: student('teacher1'), token: false });
@@ -273,7 +274,87 @@ test('полный smoke-сценарий: auth, периоды, критери�
   const teacherExport = await api(`/api/reports/${periodId}/export.xlsx`, { token: teacher.body.accessToken });
   assert.equal(teacherExport.status, 403);
 
-  // 15. Close the period - new applications for it are rejected.
+  // 15. Категория педагога определяет шкалу качества обученности; недопустимая категория отклоняется.
+  accessToken = deputyToken;
+  const badCategory = await api('/api/auth/register', { method: 'POST', body: { email: 'bad-category@e2e.test', password: 'e2ePass123', fullName: 'E2E Bad Category', schoolId, role: 'TEACHER', teacherCategory: 'WRONG' }, token: false });
+  assert.equal(badCategory.status, 400);
+  assert.equal(badCategory.body.code, 'CATEGORY_INVALID');
+  const categoryQuality = await api('/api/criteria', { method: 'POST', body: { title: 'E2E качество по категориям', category: 'Тест', type: 'QUALITY', maxAmount: 2000, fields: [], scales: [
+    { key: 'ELEMENTARY', from: 65, to: 79, amount: 1000 },
+    { key: 'ELEMENTARY', from: 80, to: 100, amount: 2000 },
+    { key: 'SUBJECT', from: 70, to: 100, amount: 2000 },
+  ] } });
+  assert.ok(categoryQuality.ok, `category quality failed: ${JSON.stringify(categoryQuality.body)}`);
+  // Пересечение диапазонов внутри одной категории по-прежнему отклоняется.
+  const overlap = await api('/api/criteria', { method: 'POST', body: { title: 'E2E пересечения', category: 'Тест', type: 'QUALITY', maxAmount: 2000, fields: [], scales: [
+    { key: 'ELEMENTARY', from: 60, to: 80, amount: 1000 },
+    { key: 'ELEMENTARY', from: 70, to: 90, amount: 2000 },
+  ] } });
+  assert.equal(overlap.status, 400);
+  assert.equal(overlap.body.code, 'SCALES_INVALID');
+  // Один и тот же процент 72% даёт 1000₽ учителю начальных классов и 2000₽ предметнику.
+  const elementary = await api('/api/auth/register', { method: 'POST', body: { email: 'elementary@e2e.test', password: 'e2ePass123', fullName: 'E2E Elementary', position: 'Учитель начальных классов', schoolId, role: 'TEACHER', teacherCategory: 'ELEMENTARY' }, token: false });
+  assert.ok(elementary.ok, `elementary register failed: ${JSON.stringify(elementary.body)}`);
+  accessToken = elementary.body.accessToken;
+  const elementaryApp = await api('/api/applications', { method: 'POST', body: { periodId } });
+  assert.ok(elementaryApp.ok);
+  const elementaryFilled = await api(`/api/applications/${elementaryApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: categoryQuality.body.id, values: { percentage: 72 }, entries: [] }] } });
+  assert.ok(elementaryFilled.ok, `elementary fill failed: ${JSON.stringify(elementaryFilled.body)}`);
+  assert.equal(elementaryFilled.body.total, 1000, `elementary 72% must give 1000, got ${elementaryFilled.body.total}`);
+  const subject = await api('/api/auth/register', { method: 'POST', body: { email: 'subject@e2e.test', password: 'e2ePass123', fullName: 'E2E Subject', position: 'Учитель математики', schoolId, role: 'TEACHER', teacherCategory: 'SUBJECT' }, token: false });
+  assert.ok(subject.ok);
+  accessToken = subject.body.accessToken;
+  const subjectApp = await api('/api/applications', { method: 'POST', body: { periodId } });
+  assert.ok(subjectApp.ok);
+  const subjectFilled = await api(`/api/applications/${subjectApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: categoryQuality.body.id, values: { percentage: 72 }, entries: [] }] } });
+  assert.ok(subjectFilled.ok);
+  assert.equal(subjectFilled.body.total, 2000, `subject 72% must give 2000, got ${subjectFilled.body.total}`);
+
+  // 16. Утверждённую заявку удалить нельзя, отклонённые и черновики — можно.
+  accessToken = deputyToken;
+  const lockedDelete = await api(`/api/applications/${applicationId}`, { method: 'DELETE' });
+  assert.equal(lockedDelete.status, 400);
+  assert.equal(lockedDelete.body.code, 'STATUS_LOCKED');
+  const strangerDelete = await api(`/api/applications/${applicationId}`, { method: 'DELETE', token: elementary.body.accessToken });
+  assert.equal(strangerDelete.status, 400);
+  assert.equal(strangerDelete.body.code, 'NOT_FOUND');
+  // Учитель удаляет свой черновик.
+  const deletedOwn = await api(`/api/applications/${elementaryApp.body.id}`, { method: 'DELETE', token: elementary.body.accessToken });
+  assert.ok(deletedOwn.ok);
+  const gone = await api(`/api/applications/${elementaryApp.body.id}`, { method: 'GET', token: elementary.body.accessToken });
+  assert.equal(gone.status, 400);
+  assert.equal(gone.body.code, 'NOT_FOUND');
+  // Заместитель директора удаляет отклонённую заявку после проверки.
+  accessToken = subject.body.accessToken;
+  await api(`/api/applications/${subjectApp.body.id}`, { method: 'POST' });
+  accessToken = deputyToken;
+  await api(`/api/reviews/${subjectApp.body.id}/reject`, { method: 'POST', body: { comment: 'Ошибка' } });
+  const deputyDelete = await api(`/api/applications/${subjectApp.body.id}`, { method: 'DELETE' });
+  assert.ok(deputyDelete.ok, `deputy delete failed: ${JSON.stringify(deputyDelete.body)}`);
+  const listAfterDelete = await api('/api/applications');
+  assert.ok(!listAfterDelete.body.some((a: any) => a.id === subjectApp.body.id), 'deleted application must disappear from the list');
+
+  // 17. Фонд периода масштабирует выплаты коэффициентом K в реестре.
+  accessToken = deputyToken;
+  const funded = await api(`/api/periods/${periodId}`, { method: 'PATCH', body: { fundAmount: 5000 } });
+  assert.ok(funded.ok);
+  assert.equal(funded.body.fundAmount, 5000);
+  const fundedReport = await api(`/api/reports/${periodId}/export.xlsx`);
+  assert.ok(fundedReport.ok);
+  const fundedWorkbook = new ExcelJS.Workbook();
+  await fundedWorkbook.xlsx.load(fundedReport.buffer as unknown as import('exceljs').Buffer);
+  const fundedTotals = fundedWorkbook.getWorksheet('Итоги');
+  assert.ok(fundedTotals, 'totals sheet must exist');
+  const fundedRows: Record<string, any> = {};
+  for (let i = 1; i <= fundedTotals.rowCount; i++) fundedRows[String(fundedTotals.getRow(i).getCell(1).value)] = fundedTotals.getRow(i).getCell(2).value;
+  assert.equal(fundedRows['Потенциальная сумма выплат, ₽'], 10300);
+  assert.equal(fundedRows['Коэффициент K'], Math.round((5000 / 10300) * 10000) / 10000);
+  assert.equal(fundedRows['Итого к выплате, ₽'], 5000);
+  const badFund = await api(`/api/periods/${periodId}`, { method: 'PATCH', body: { fundAmount: -100 } });
+  assert.equal(badFund.status, 400);
+  assert.equal(badFund.body.code, 'FUND_INVALID');
+
+  // 18. Close the period - new applications for it are rejected.
   const closed = await api(`/api/periods/${periodId}`, { method: 'PATCH', body: { active: false } });
   assert.ok(closed.ok);
   assert.equal(closed.body.active, false);

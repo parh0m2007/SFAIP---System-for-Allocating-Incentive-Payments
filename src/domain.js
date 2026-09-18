@@ -6,6 +6,25 @@ export const QUALITY_BANDS = [
   { from: 75, to: 90, amount: 4000 },
 ];
 
+// Категории педагогов, для которых настраивается шкала качества обученности.
+export const TEACHER_CATEGORIES = [
+  { id: 'elementary', label: 'Учитель начальных классов' },
+  { id: 'subject', label: 'Учитель-предметник' },
+  { id: 'creative', label: 'Учитель ИЗО, музыки, технологии, физкультуры' },
+];
+const CATEGORY_IDS = TEACHER_CATEGORIES.map((category) => category.id);
+export const categoryLabel = (id) => TEACHER_CATEGORIES.find((category) => category.id === id)?.label || 'Категория не указана';
+
+// Шкалы качества обученности по умолчанию зависят от категории педагога:
+// учитель начальных классов — 80–100% и 65–79%;
+// учитель-предметник — 70–100% и 50–69%;
+// учитель ИЗО, физкультуры, технологии, музыки — 90–100%.
+export const DEFAULT_CATEGORY_BANDS = {
+  elementary: [{ from: 65, to: 79, amount: 1000 }, { from: 80, to: 100, amount: 2000 }],
+  subject: [{ from: 50, to: 69, amount: 1000 }, { from: 70, to: 100, amount: 2000 }],
+  creative: [{ from: 90, to: 100, amount: 1500 }],
+};
+
 export const OLYMPIAD_LEVELS = [
   { id: 'municipal', label: 'Муниципальный' },
   { id: 'regional', label: 'Региональный' },
@@ -31,9 +50,15 @@ export const updateCriterionAmount = (criterion, amount) => ({
 // Build the complete criterion payload used by quick inline edits. The API
 // replaces nested fields/scales on PATCH, so omitting them would silently
 // erase a deputy's existing configuration.
+export const categoryBandScales = (categoryBands = {}) =>
+  TEACHER_CATEGORIES.flatMap((category) =>
+    (categoryBands[category.id] || []).map((band) => ({ key: category.id.toUpperCase(), from: band.from, to: band.to, amount: band.amount })));
+
 export const criterionUpdatePayload = (criterion, overrides = {}) => {
   const merged = { ...criterion, ...overrides };
-  const scalesSource = merged.qualityBands?.length ? merged.qualityBands : (merged.scales || []);
+  const scalesSource = merged.categoryBands
+    ? categoryBandScales(merged.categoryBands)
+    : (merged.qualityBands?.length ? merged.qualityBands : (merged.scales || []));
   return {
     title: merged.title,
     category: merged.category,
@@ -59,11 +84,38 @@ export const criterionUpdatePayload = (criterion, overrides = {}) => {
   };
 };
 
-export const getQualityBand = (bands = QUALITY_BANDS, percentage) => {
+// Шкалы качества обученности для категории педагога. Если у критерия есть шкалы
+// под категорию — берём их; иначе доступны шкалы по умолчанию.
+export const getQualityBands = (criterion, category) => {
+  const groups = criterion?.categoryBands || {};
+  if (category && groups[category]?.length) return groups[category];
+  return groups.default || groups.subject || criterion?.qualityBands || QUALITY_BANDS;
+};
+
+export const getQualityBand = (criterion, percentage, category) => {
   if (percentage === '' || percentage === null || percentage === undefined) return null;
   const value = Number(percentage);
   if (!Number.isFinite(value) || value < 0) return null;
-  return bands.find((band, index) => value <= band.to && (index === 0 ? value >= band.from : value > band.from)) || null;
+  const bands = (Array.isArray(criterion) ? criterion : getQualityBands(criterion, category)).slice().sort((a, b) => a.from - b.from);
+  // Диапазоны включительные; при пересечении на границе побеждает первый (нижний).
+  return bands.find((band) => value >= band.from && value <= band.to) || null;
+};
+
+// Расчёт итоговых выплат с учётом фонда стимулирующих выплат периода:
+// K = 1, если потенциальная сумма не превышает фонд, иначе K = Фонд / Потенциальная сумма.
+// Итоговая выплата каждого сотрудника = его потенциальная выплата × K.
+export const calculatePayouts = (applications = [], fund = 0) => {
+  const rows = (applications || []).map((application) => ({ application, potential: Number(application?.total) || 0 }));
+  const potential = rows.reduce((sum, row) => sum + row.potential, 0);
+  const fundValue = Number(fund) || 0;
+  const coefficient = fundValue > 0 && potential > fundValue ? fundValue / potential : 1;
+  return {
+    fund: fundValue,
+    potential,
+    coefficient,
+    total: Math.round(potential * coefficient),
+    rows: rows.map((row) => ({ ...row.application, potential: row.potential, payout: Math.round(row.potential * coefficient) })),
+  };
 };
 
 export const normalizeQualityPercentage = (percentage) => {
@@ -99,8 +151,11 @@ export const getApplicationValidationErrors = (application, criteria = []) => {
         if (Array.isArray(options) && options.length && !options.map(String).includes(String(value))) errors.push({ criterionId: item.criterionId, fieldKey: field.key, code: 'field-select' });
       }
     });
-    if (criterion?.type === 'quality' && !getQualityBand(criterion.qualityBands, item.percentage)) {
-      errors.push({ criterionId: item.criterionId, code: 'quality-percentage' });
+    if (criterion?.type === 'quality') {
+      const percentage = item.percentage;
+      if (percentage === '' || percentage === null || percentage === undefined || !Number.isFinite(Number(percentage)) || Number(percentage) < 0 || Number(percentage) > 100) {
+        errors.push({ criterionId: item.criterionId, code: 'quality-percentage' });
+      }
     }
     if (criterion?.type === 'olympiad') {
       const entries = item.entries || [];
@@ -147,8 +202,8 @@ export const decideApplication = (application, status, comment = '') => ({
 
 export const defaultState = () => ({
   activeRole: 'teacher',
-  activePeriod: { id: '2025-2', label: '2 полугодие 2025–2026 уч. г.', due: '15 сентября 2026' },
-  currentUser: { id: 'teacher-1', name: 'Кристина Обухова', initials: 'КО', position: 'Учитель математики', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми' },
+  activePeriod: { id: '2025-2', label: '2 полугодие 2025–2026 уч. г.', due: '15 сентября 2026', fund: 300000 },
+  currentUser: { id: 'teacher-1', name: 'Кристина Обухова', initials: 'КО', position: 'Учитель математики', teacherCategory: 'subject', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми' },
   currentAdmin: { id: 'admin-1', name: 'Алексей Воронов', initials: 'АВ', position: 'Заместитель директора', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми' },
   schools: [
     { id: 'school-101', name: 'МАОУ «СОШ №101» г. Перми' },
@@ -157,10 +212,10 @@ export const defaultState = () => ({
   ],
   applications: [
     {
-      id: 'app-101', periodId: '2025-2', teacherId: 'teacher-1', schoolId: 'school-101', status: 'draft', total: 7600, comment: '',
+      id: 'app-101', periodId: '2025-2', teacherId: 'teacher-1', schoolId: 'school-101', status: 'draft', total: 6300, comment: '',
       items: [
-        { criterionId: '1.1', title: 'Качество обученности', category: 'Учебная деятельность', amount: 4000, maxAmount: 4000, percentage: 82, evidence: 'Выгрузка из журнала', progress: 100 },
-        { criterionId: '2.2', title: 'Подготовка победителей и призёров предметных олимпиад', category: 'Результаты обучающихся', amount: 2600, maxAmount: 7000, entries: [{ level: 'municipal', diploma: 'winner', studentName: 'Иванов Иван', olympiadName: 'Олимпиада по математике' }, { level: 'regional', diploma: 'prize', studentName: 'Петрова Анна', olympiadName: 'Олимпиада по физике' }], evidence: 'diplom_2.pdf', progress: 72 },
+        { criterionId: '1.1', title: 'Качество обученности', category: 'Учебная деятельность', amount: 2000, maxAmount: 2000, percentage: 82, evidence: 'Выгрузка из журнала', progress: 100 },
+        { criterionId: '2.2', title: 'Подготовка победителей и призёров предметных олимпиад', category: 'Результаты обучающихся', amount: 3300, maxAmount: 7000, entries: [{ level: 'municipal', diploma: 'winner', studentName: 'Иванов Иван', olympiadName: 'Олимпиада по математике' }, { level: 'regional', diploma: 'prize', studentName: 'Петрова Анна', olympiadName: 'Олимпиада по физике' }], evidence: 'diplom_2.pdf', progress: 72 },
         { criterionId: '4.4', title: 'Обобщение опыта', category: 'Методическая работа', amount: 1000, maxAmount: 2000, evidence: 'Сертификат НПК.pdf', progress: 50 },
       ], createdAt: '2026-08-29T10:00:00Z', updatedAt: '2026-08-29T10:00:00Z',
     },
@@ -170,20 +225,25 @@ export const defaultState = () => ({
       createdAt: '2026-08-27T10:00:00Z', updatedAt: '2026-08-28T08:30:00Z',
     },
     {
-      id: 'app-094', periodId: '2025-2', teacherId: 'teacher-3', schoolId: 'school-101', status: 'approved', total: 9300, comment: '',
-      items: [{ criterionId: '3.2', title: 'Выездные мероприятия', category: 'Классное руководство', amount: 9300, maxAmount: 10000, evidence: 'Справка ВР.pdf', progress: 93 }],
+      id: 'app-094', periodId: '2025-2', teacherId: 'teacher-3', schoolId: 'school-101', status: 'approved', total: 1000, comment: '',
+      items: [{ criterionId: '3.2', title: 'Выездные мероприятия', category: 'Классное руководство', amount: 1000, maxAmount: 1000, evidence: 'Справка ВР.pdf', progress: 93 }],
       createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-26T12:00:00Z',
+    },
+    {
+      id: 'app-091', periodId: '2025-2', teacherId: 'teacher-4', schoolId: 'school-101', status: 'rejected', total: 10000, comment: 'Приложите копию диплома конкурса',
+      items: [{ criterionId: '4.1', title: 'Конкурс профессионального мастерства', category: 'Методическая работа', amount: 10000, maxAmount: 25000, evidence: 'Диплом.pdf', progress: 100 }],
+      createdAt: '2026-08-24T10:00:00Z', updatedAt: '2026-08-25T09:00:00Z',
     },
   ],
   users: [
-    { id: 'teacher-1', name: 'Кристина Обухова', initials: 'КО', position: 'Учитель математики', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми', status: 'active' },
-    { id: 'teacher-2', name: 'Артём Соколов', initials: 'АС', position: 'Учитель физики', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми', status: 'active' },
-    { id: 'teacher-3', name: 'Елена Мельникова', initials: 'ЕМ', position: 'Учитель начальных классов', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми', status: 'active' },
-    { id: 'teacher-4', name: 'Наталья Королёва', initials: 'НК', position: 'Учитель русского языка', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми', status: 'active' },
+    { id: 'teacher-1', name: 'Кристина Обухова', initials: 'КО', position: 'Учитель математики', teacherCategory: 'subject', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми', status: 'active' },
+    { id: 'teacher-2', name: 'Артём Соколов', initials: 'АС', position: 'Учитель физики', teacherCategory: 'subject', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми', status: 'active' },
+    { id: 'teacher-3', name: 'Елена Мельникова', initials: 'ЕМ', position: 'Учитель начальных классов', teacherCategory: 'elementary', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми', status: 'active' },
+    { id: 'teacher-4', name: 'Наталья Королёва', initials: 'НК', position: 'Учитель русского языка', teacherCategory: 'subject', schoolId: 'school-101', schoolName: 'МАОУ «СОШ №101» г. Перми', status: 'active' },
   ],
   criteria: [
-    { id: '1.1', type: 'quality', title: 'Качество обученности', category: 'Учебная деятельность', amount: 4000, maxAmount: 4000, qualityBands: QUALITY_BANDS, usage: '18 заявок' },
-    { id: '2.2', type: 'olympiad', title: 'Подготовка победителей и призёров предметных олимпиад', category: 'Результаты обучающихся', amount: 2600, maxAmount: 7000, olympiadAmounts: { municipal: { winner: 1500, prize: 1000 }, regional: { winner: 2500, prize: 1800 }, krai: { winner: 3500, prize: 2600 }, federal: { winner: 4500, prize: 3500 }, 'all-russian': { winner: 6000, prize: 4500 }, international: { winner: 7000, prize: 5500 } }, usage: '12 заявок' },
+    { id: '1.1', type: 'quality', title: 'Качество обученности', category: 'Учебная деятельность', amount: 2000, maxAmount: 2000, categoryBands: DEFAULT_CATEGORY_BANDS, scales: categoryBandScales(DEFAULT_CATEGORY_BANDS), usage: '18 заявок' },
+    { id: '2.2', type: 'olympiad', title: 'Подготовка победителей и призёров предметных олимпиад', category: 'Результаты обучающихся', amount: 3300, maxAmount: 7000, olympiadAmounts: { municipal: { winner: 1500, prize: 1000 }, regional: { winner: 2500, prize: 1800 }, krai: { winner: 3500, prize: 2600 }, federal: { winner: 4500, prize: 3500 }, 'all-russian': { winner: 6000, prize: 4500 }, international: { winner: 7000, prize: 5500 } }, scales: Object.entries({ municipal: { winner: 1500, prize: 1000 }, regional: { winner: 2500, prize: 1800 }, krai: { winner: 3500, prize: 2600 }, federal: { winner: 4500, prize: 3500 }, 'all-russian': { winner: 6000, prize: 4500 }, international: { winner: 7000, prize: 5500 } }).flatMap(([level, values]) => Object.entries(values).map(([diploma, amount]) => ({ key: `${level}:${diploma}`, amount }))), usage: '12 заявок' },
     { id: '3.2', title: 'Выездные мероприятия за пределы СМО', category: 'Классное руководство', amount: 1000, maxAmount: 1000, usage: '6 заявок' },
     { id: '4.1', title: 'Конкурс профессионального мастерства', category: 'Методическая работа', amount: 10000, maxAmount: 25000, usage: '4 заявки' },
   ],

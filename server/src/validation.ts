@@ -1,10 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
-import { CriterionType, FieldType, Role } from '@prisma/client';
+import { CriterionType, FieldType, Role, TeacherCategory } from '@prisma/client';
 
 const OLYMPIAD_LEVELS = new Set(['municipal', 'regional', 'krai', 'federal', 'all-russian', 'international']);
 const DIPLOMA_TYPES = new Set(['winner', 'prize']);
 const FIELD_TYPES = new Set(Object.values(FieldType));
 const CRITERION_TYPES = new Set(Object.values(CriterionType));
+const TEACHER_CATEGORIES = new Set(Object.values(TeacherCategory));
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const fail = (code: string, message: string): never => { throw new BadRequestException({ code, message }); };
@@ -16,6 +17,10 @@ export function assertPeriodPayload(payload: any) {
   const endsAt = new Date(payload?.endsAt);
   if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) fail('PERIOD_INVALID', 'Укажите даты начала и окончания периода');
   if (startsAt >= endsAt) fail('PERIOD_INVALID', 'Дата окончания должна быть позже даты начала');
+  if (payload?.fundAmount != null && payload.fundAmount !== '') {
+    const fund = Number(payload.fundAmount);
+    if (!Number.isInteger(fund) || fund < 0 || fund > 1_000_000_000) fail('FUND_INVALID', 'Фонд должен быть целым числом от 0 до 1 000 000 000 ₽');
+  }
 }
 
 export function assertTeacherRole(role: unknown): asserts role is typeof Role.TEACHER {
@@ -36,6 +41,11 @@ export function assertRegisterPayload(payload: any) {
   if (password.length < 8 || password.length > 128) fail('PASSWORD_INVALID', 'Пароль должен содержать от 8 до 128 символов');
   if (!String(payload?.schoolId || '').trim()) fail('SCHOOL_INVALID', 'Выберите школу');
   if (!Object.values(Role).includes(payload?.role)) fail('ROLE_INVALID', 'Недопустимая роль');
+  if (payload?.teacherCategory != null && payload.teacherCategory !== '' && !TEACHER_CATEGORIES.has(payload.teacherCategory)) fail('CATEGORY_INVALID', 'Недопустимая категория педагога');
+}
+
+export function assertTeacherCategory(value: unknown) {
+  if (value != null && value !== '' && !TEACHER_CATEGORIES.has(value as TeacherCategory)) fail('CATEGORY_INVALID', 'Недопустимая категория педагога');
 }
 
 export function assertCriterionPayload(payload: any) {
@@ -61,28 +71,40 @@ export function assertCriterionPayload(payload: any) {
 
   const scales = payload?.scales == null ? [] : payload.scales;
   if (!Array.isArray(scales) || scales.length > 100) fail('SCALES_INVALID', 'Шкалы заданы некорректно');
-  const ranges = scales.filter((scale: any) => scale?.from != null || scale?.to != null);
-  const sorted = [...ranges].sort((a, b) => Number(a.from ?? -Infinity) - Number(b.from ?? -Infinity));
-  sorted.forEach((scale: any, index: number) => {
-    const from = scale.from == null ? 0 : Number(scale.from);
-    const to = scale.to == null ? 100 : Number(scale.to);
-    if (!finiteNumber(from) || !finiteNumber(to) || from < 0 || to > 100 || from > to) fail('SCALES_INVALID', 'Диапазоны процентов должны быть от 0 до 100 без пересечений');
-    amount(Number(scale.amount), maxAmount, 'SCALES_INVALID');
-    const previous = sorted[index - 1];
-    if (previous) {
-      const previousTo = previous.to == null ? 100 : Number(previous.to);
-      if (from < previousTo) fail('SCALES_INVALID', 'Диапазоны процентов не должны пересекаться');
-    }
+  // Шкалы с диапазоном процентов (качество обученности) группируются по ключу —
+  // категории педагога. Пересечения внутри одной категории недопустимы,
+  // но диапазоны разных категорий могут совпадать.
+  const grouped = new Map<string, any[]>();
+  scales.forEach((scale: any) => {
+    if (scale?.from == null && scale?.to == null) return;
+    const key = String(scale?.key || '');
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(scale);
   });
-  scales.filter((scale: any) => !ranges.includes(scale)).forEach((scale: any) => {
-    if (!String(scale?.key || '').trim()) fail('SCALES_INVALID', 'Укажите ключ шкалы');
-    amount(Number(scale.amount), maxAmount, 'SCALES_INVALID');
-  });
+  for (const group of grouped.values()) {
+    const sorted = [...group].sort((a, b) => Number(a.from ?? -Infinity) - Number(b.from ?? -Infinity));
+    sorted.forEach((scale: any, index: number) => {
+      const from = scale.from == null ? 0 : Number(scale.from);
+      const to = scale.to == null ? 100 : Number(scale.to);
+      if (!finiteNumber(from) || !finiteNumber(to) || from < 0 || to > 100 || from > to) fail('SCALES_INVALID', 'Диапазоны процентов должны быть от 0 до 100 без пересечений');
+      amount(Number(scale.amount), maxAmount, 'SCALES_INVALID');
+      const previous = sorted[index - 1];
+      if (previous) {
+        const previousTo = previous.to == null ? 100 : Number(previous.to);
+        if (from < previousTo) fail('SCALES_INVALID', 'Диапазоны процентов не должны пересекаться');
+      }
+    });
+  }
+  // Ключевые шкалы (олимпиады: уровень и диплом) должны иметь уникальный ключ.
+  // Повторяющиеся ключи диапазонов (категории педагога) разрешены — они
+  // обрабатываются групповой проверкой пересечений выше.
   const scaleKeys = new Set<string>();
   scales.forEach((scale: any) => {
+    if (scale?.from != null || scale?.to != null) return;
     const key = String(scale?.key || '').trim();
-    if (key && scaleKeys.has(key)) fail('SCALES_INVALID', `Шкала «${key}» указана повторно`);
-    if (key) scaleKeys.add(key);
+    if (!key) fail('SCALES_INVALID', 'Укажите ключ шкалы');
+    if (scaleKeys.has(key)) fail('SCALES_INVALID', `Шкала «${key}» указана повторно`);
+    scaleKeys.add(key);
   });
 }
 

@@ -32,9 +32,6 @@ function defaultStorage() {
 }
 
 function normalizeBaseUrl(value) {
-  // '' and '/' mean same-origin (production behind nginx); keep them empty so
-  // request paths become relative URLs instead of falling back to localhost.
-  if (value === '' || value === '/') return '';
   return String(value || DEFAULT_BASE_URL).replace(/\/+$/, '');
 }
 
@@ -74,7 +71,7 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
   const requestFetch = fetchImpl || globalThis.fetch?.bind(globalThis);
   if (!requestFetch) throw new Error('fetch is not available');
   const tokenStorage = storage || defaultStorage();
-  const root = normalizeBaseUrl(baseUrl ?? globalThis.API_BASE_URL ?? DEFAULT_BASE_URL);
+  const root = normalizeBaseUrl(baseUrl || globalThis.API_BASE_URL);
 
   const getAccessToken = () => tokenStorage.getItem(ACCESS_TOKEN_KEY);
   const getRefreshToken = () => tokenStorage.getItem(REFRESH_TOKEN_KEY);
@@ -169,6 +166,7 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
     listPeriods: () => request('/api/periods'),
     createPeriod: (data) => request('/api/periods', { method: 'POST', body: data }),
     closePeriod: (id) => request(`/api/periods/${encodeURIComponent(id)}`, { method: 'PATCH', body: { active: false } }),
+    updatePeriod: (id, data) => request(`/api/periods/${encodeURIComponent(id)}`, { method: 'PATCH', body: data }),
     listUsers: () => request('/api/users'),
     createCriterion: (data) => request('/api/criteria', { method: 'POST', body: data }),
     updateCriterion: (id, data) => request(`/api/criteria/${encodeURIComponent(id)}`, { method: 'PATCH', body: data }),
@@ -179,6 +177,7 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
     getApplication: (id) => request(`/api/applications/${encodeURIComponent(id)}`),
     updateApplication: (id, data) => request(`/api/applications/${encodeURIComponent(id)}`, { method: 'PATCH', body: data }),
     submitApplication: (id) => request(`/api/applications/${encodeURIComponent(id)}/submit`, { method: 'POST' }),
+    deleteApplication: (id) => request(`/api/applications/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     listReviews: () => request('/api/reviews'),
     approveReview: (id) => request(`/api/reviews/${encodeURIComponent(id)}/approve`, { method: 'POST' }),
     rejectReview: (id, comment) => request(`/api/reviews/${encodeURIComponent(id)}/reject`, { method: 'POST', body: typeof comment === 'string' ? { comment } : comment }),
@@ -202,10 +201,10 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
   client.schools = { list: client.listSchools };
   client.profile = { get: client.getProfile, update: client.updateProfile };
   client.criteria = { list: client.listCriteria, create: client.createCriterion, update: client.updateCriterion, updateStatus: client.updateCriterionStatus, delete: client.deleteCriterion };
-  client.periods = { list: client.listPeriods, create: client.createPeriod, close: client.closePeriod };
+  client.periods = { list: client.listPeriods, create: client.createPeriod, close: client.closePeriod, update: client.updatePeriod };
   client.users = { list: client.listUsers };
   client.getCriteria = client.listCriteria;
-  client.applications = { list: client.listApplications, create: client.createApplication, get: client.getApplication, update: client.updateApplication, submit: client.submitApplication };
+  client.applications = { list: client.listApplications, create: client.createApplication, get: client.getApplication, update: client.updateApplication, submit: client.submitApplication, delete: client.deleteApplication };
   client.getApplications = client.listApplications;
   client.reviews = { list: client.listReviews, approve: client.approveReview, reject: client.rejectReview };
   client.notifications = { list: client.listNotifications, markRead: client.markNotificationRead };
@@ -228,5 +227,5 @@ export default api;
 export const { register, login, refresh, logout, getProfile, updateProfile, listCriteria, createCriterion, updateCriterion, updateCriterionStatus, deleteCriterion,
   listSchools, listPeriods, createPeriod, closePeriod,
   listUsers,
-  listApplications, createApplication, getApplication, updateApplication, submitApplication, listReviews, approveReview, rejectReview,
+  listApplications, createApplication, getApplication, updateApplication, submitApplication, deleteApplication, listReviews, approveReview, rejectReview,
   listNotifications, markNotificationRead, uploadFile, downloadFile, exportReport } = api;

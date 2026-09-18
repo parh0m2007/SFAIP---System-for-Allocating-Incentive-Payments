@@ -53,7 +53,7 @@ export function renderApplicationDecided(params: { teacherName: string; approved
   const header = params.approved ? 'Заявка утверждена' : 'Заявка отправлена на доработку';
   const details = params.approved
     ? `Ваша заявка за период «${params.periodLabel}» утверждена. Сумма к выплате: <b>${rub} ₽</b>. Заявка включена в реестр выплат.`
-    : `Завуч вернул вашу заявку за период «${params.periodLabel}» на доработку.${params.comment ? `<p style="background:#fff4df;border-radius:8px;padding:10px 12px"><b>Комментарий:</b> ${params.comment}</p>` : ''}`;
+    : `Заместитель директора вернул вашу заявку за период «${params.periodLabel}» на доработку.${params.comment ? `<p style="background:#fff4df;border-radius:8px;padding:10px 12px"><b>Комментарий:</b> ${params.comment}</p>` : ''}`;
   return {
     subject: header,
     html: `<div style="font:14px/1.6 Arial,sans-serif;color:#17243a;max-width:520px"><h2 style="margin:0 0 12px">${header}</h2><p>${details}</p><p>Откройте систему, чтобы ${params.approved ? 'посмотреть реестр выплат' : 'внести исправления и отправить заявку повторно'}.</p></div>`,

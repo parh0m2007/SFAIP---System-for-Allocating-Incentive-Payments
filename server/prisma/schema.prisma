@@ -10,6 +10,11 @@ enum Role {
   TEACHER
   DEPUTY
 }
+enum TeacherCategory {
+  ELEMENTARY
+  SUBJECT
+  CREATIVE
+}
 enum ApplicationStatus {
   DRAFT
   REVIEW
@@ -47,6 +52,7 @@ model User {
   passwordHash String
   role Role
   position String?
+  teacherCategory TeacherCategory?
   schoolId String
   school School @relation(fields:[schoolId], references:[id])
   refreshTokens RefreshToken[]
@@ -72,6 +78,7 @@ model Period {
   label String
   startsAt DateTime
   endsAt DateTime
+  fundAmount Int?
   active Boolean @default(true)
   applications Application[]
 }

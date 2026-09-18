@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createApplication, submitApplication, calculateReward, canCreateApplication, getReviewableApplications, updateCriterionAmount, getQualityBand, getOlympiadReward, calculateOlympiadTotal, normalizeQualityPercentage, getApplicationValidationErrors, criterionUpdatePayload } from '../src/domain.js';
+import { createApplication, submitApplication, calculateReward, canCreateApplication, getReviewableApplications, updateCriterionAmount, getQualityBand, getOlympiadReward, calculateOlympiadTotal, normalizeQualityPercentage, getApplicationValidationErrors, criterionUpdatePayload, calculatePayouts, DEFAULT_CATEGORY_BANDS } from '../src/domain.js';
 
 test('расчёт выплаты не превышает максимальный лимит критерия', () => {
   assert.equal(calculateReward({ maxAmount: 5000, requestedAmount: 7200 }), 5000);
@@ -94,4 +94,59 @@ test('быстрое изменение суммы сохраняет поля �
   assert.equal(payload.amount, 1500);
   assert.deepEqual(payload.fields, [{ key: 'event', label: 'Мероприятие', type: 'TEXT', required: true }]);
   assert.deepEqual(payload.scales, [{ key: 'base', from: 0, to: 50, amount: 1000 }]);
+});
+
+test('качество обученности выбирает выплату по категории педагога', () => {
+  const criterion = { categoryBands: DEFAULT_CATEGORY_BANDS };
+  // Учитель-предметник: 70–100% — 2000, 50–69% — 1000.
+  assert.equal(getQualityBand(criterion, 82, 'subject').amount, 2000);
+  assert.equal(getQualityBand(criterion, 70, 'subject').amount, 2000);
+  assert.equal(getQualityBand(criterion, 55, 'subject').amount, 1000);
+  assert.equal(getQualityBand(criterion, 40, 'subject'), null);
+  // Учитель начальных классов: 80–100% — 2000, 65–79% — 1000.
+  assert.equal(getQualityBand(criterion, 85, 'elementary').amount, 2000);
+  assert.equal(getQualityBand(criterion, 72, 'elementary').amount, 1000);
+  // Учитель ИЗО, физкультуры, технологии, музыки: 90–100% — 1500.
+  assert.equal(getQualityBand(criterion, 95, 'creative').amount, 1500);
+  assert.equal(getQualityBand(criterion, 89, 'creative'), null);
+});
+
+test('категорийные шкалы сериализуются в scales с ключом-категорией', () => {
+  const payload = criterionUpdatePayload({
+    title: 'Качество обученности', category: 'Учебная деятельность', type: 'quality', maxAmount: 2000,
+    categoryBands: DEFAULT_CATEGORY_BANDS,
+  });
+  const elementaryTop = payload.scales.find((scale) => scale.key === 'ELEMENTARY' && scale.from === 80);
+  assert.deepEqual(elementaryTop, { key: 'ELEMENTARY', from: 80, to: 100, amount: 2000 });
+  const creative = payload.scales.find((scale) => scale.key === 'CREATIVE');
+  assert.equal(creative.amount, 1500);
+});
+
+test('устаревший критерий с плоской шкалой не теряет диапазоны', () => {
+  const payload = criterionUpdatePayload({
+    title: 'Старое качество', category: 'Учебная деятельность', type: 'quality', maxAmount: 4000,
+    qualityBands: [{ from: 0, to: 50, amount: 1000 }, { from: 50, to: 90, amount: 3000 }],
+  });
+  assert.equal(payload.scales.length, 2);
+  assert.equal(payload.scales[0].from, 0);
+  assert.equal(payload.scales[1].amount, 3000);
+});
+
+test('коэффициент фонда масштабирует выплаты при превышении фонда', () => {
+  const applications = [{ id: 'a1', total: 300000 }, { id: 'a2', total: 100000 }];
+  // Потенциальная сумма 400 000 ₽ не превышает фонд — K = 1.
+  const exact = calculatePayouts(applications, 400000);
+  assert.equal(exact.coefficient, 1);
+  assert.equal(exact.total, 400000);
+  assert.equal(exact.rows[0].payout, 300000);
+  // Фонд 300 000 ₽ при потенциале 400 000 ₽ — K = 0,75, выплаты пропорциональны.
+  const over = calculatePayouts(applications, 300000);
+  assert.equal(over.coefficient, 0.75);
+  assert.equal(over.rows[0].payout, 225000);
+  assert.equal(over.rows[1].payout, 75000);
+  assert.equal(over.total, 300000);
+  // Фонд не задан — коэффициент не применяется.
+  const noFund = calculatePayouts(applications, 0);
+  assert.equal(noFund.coefficient, 1);
+  assert.equal(noFund.total, 400000);
 });
