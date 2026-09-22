@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createApplication, submitApplication, calculateReward, canCreateApplication, getReviewableApplications, updateCriterionAmount, getQualityBand, getOlympiadReward, calculateOlympiadTotal, normalizeQualityPercentage, getApplicationValidationErrors, criterionUpdatePayload, calculatePayouts, DEFAULT_CATEGORY_BANDS } from '../src/domain.js';
+import { createApplication, submitApplication, calculateReward, canCreateApplication, getReviewableApplications, updateCriterionAmount, getQualityBand, getOlympiadReward, calculateOlympiadTotal, normalizeQualityPercentage, getApplicationValidationErrors, criterionUpdatePayload, criterionLevels, criterionDiplomas, hasBandScales, customBandMode, calculatePayouts, DEFAULT_CATEGORY_BANDS, OLYMPIAD_LEVELS, DIPLOMA_TYPES } from '../src/domain.js';
 
 test('расчёт выплаты не превышает максимальный лимит критерия', () => {
   assert.equal(calculateReward({ maxAmount: 5000, requestedAmount: 7200 }), 5000);
@@ -132,6 +132,33 @@ test('устаревший критерий с плоской шкалой не 
   assert.equal(payload.scales[1].amount, 3000);
 });
 
+test('справочники олимпиадного критерия по умолчанию совпадают со стандартными', () => {
+  assert.equal(criterionLevels({}), OLYMPIAD_LEVELS);
+  assert.equal(criterionDiplomas({}), DIPLOMA_TYPES);
+  assert.deepEqual(criterionLevels({ levelsJson: '[{"id":"ege","label":"ЕГЭ"}]' }), [{ id: 'ege', label: 'ЕГЭ' }]);
+  // битый JSON не ломает справочник
+  assert.equal(criterionDiplomas({ diplomasJson: 'not-json' }), DIPLOMA_TYPES);
+});
+
+test('олимпиадный критерий считает выплаты по настраиваемому справочнику (баллы ОГЭ/ЕГЭ)', () => {
+  // Строка 1.3 ТЗ: наличие обучающихся с баллами ОГЭ/ЕГЭ и ВПР — выплата за каждого.
+  const criterion = {
+    levels: [{ id: 'ege', label: 'ЕГЭ' }, { id: 'vpr', label: 'ВПР (4 класс)' }],
+    diplomas: [{ id: 'score100', label: '100 баллов' }, { id: 'score90', label: '90–99 баллов' }, { id: 'pass', label: 'Положительный результат' }],
+    olympiadAmounts: { ege: { score100: 5000, score90: 3500 }, vpr: { pass: 3000 } },
+  };
+  const entries = [
+    { level: 'ege', diploma: 'score100', studentName: 'Иванов Иван', olympiadName: 'ЕГЭ, математика' },
+    { level: 'ege', diploma: 'score90', studentName: 'Петрова Анна', olympiadName: 'ЕГЭ, русский язык' },
+    { level: 'vpr', diploma: 'pass', studentName: 'Сидоров Олег', olympiadName: 'ВПР, 4 класс' },
+  ];
+  // 5000 + 3500 + 3000 = 11500 — начисление за каждого обучающегося.
+  assert.equal(calculateOlympiadTotal(criterion, entries), 11500);
+  assert.equal(getOlympiadReward(criterion, { level: 'ege', diploma: 'score100' }), 5000);
+  // незаполненная строка ученика не учитывается
+  assert.equal(calculateOlympiadTotal(criterion, [...entries, { level: 'ege', diploma: 'score100', studentName: '', olympiadName: '' }]), 11500);
+});
+
 test('коэффициент фонда масштабирует выплаты при превышении фонда', () => {
   const applications = [{ id: 'a1', total: 300000 }, { id: 'a2', total: 100000 }];
   // Потенциальная сумма 400 000 ₽ не превышает фонд — K = 1.
@@ -149,4 +176,41 @@ test('коэффициент фонда масштабирует выплаты 
   const noFund = calculatePayouts(applications, 0);
   assert.equal(noFund.coefficient, 1);
   assert.equal(noFund.total, 400000);
+});
+
+test('пользовательский критерий распознаёт процентную шкалу и её режим', () => {
+  // Только варианты — процентной шкалы нет.
+  const variantsOnly = { type: 'custom', scales: [{ key: 'winner', amount: 8000, metadata: { label: 'Победитель' } }] };
+  assert.equal(hasBandScales(variantsOnly), false);
+  assert.equal(customBandMode(variantsOnly), 'common');
+  // Диапазоны с общим ключом — режим «общие проценты».
+  const common = { type: 'custom', scales: [{ key: 'COMMON', from: 0, to: 60, amount: 1000 }, { key: 'COMMON', from: 61, to: 100, amount: 2000 }] };
+  assert.equal(hasBandScales(common), true);
+  assert.equal(customBandMode(common), 'common');
+  // Диапазоны с ключом-категорией — режим «по категориям педагогов».
+  const byCategory = { type: 'custom', scales: [{ key: 'SUBJECT', from: 0, to: 69, amount: 1000 }, { key: 'ELEMENTARY', from: 0, to: 79, amount: 500 }] };
+  assert.equal(customBandMode(byCategory), 'category');
+});
+
+test('пользовательский критерий считает выплату по процентным диапазонам', () => {
+  // Общие диапазоны доступны педагогу любой категории (как после mapCriterion:
+  // общие диапазоны попадают в qualityBands, когда нет диапазонов по категории).
+  const common = { type: 'custom', categoryBands: {}, qualityBands: [{ from: 0, to: 60, amount: 1000 }, { from: 61, to: 100, amount: 2000 }] };
+  assert.equal(getQualityBand(common, 45, 'subject')?.amount, 1000);
+  assert.equal(getQualityBand(common, 90, 'creative')?.amount, 2000);
+  assert.equal(getQualityBand(common, '', 'subject'), null);
+  // По категориям: каждый педагог видит свою шкалу.
+  const byCategory = { type: 'custom', categoryBands: { subject: [{ from: 0, to: 69, amount: 1000 }], elementary: [{ from: 0, to: 79, amount: 500 }] } };
+  assert.equal(getQualityBand(byCategory, 50, 'subject')?.amount, 1000);
+  assert.equal(getQualityBand(byCategory, 50, 'elementary')?.amount, 500);
+});
+
+test('отправка пользовательского критерия с процентной шкалой требует процент', () => {
+  const bandCriterion = { id: 'c1', type: 'custom', scales: [{ key: 'COMMON', from: 0, to: 100, amount: 1000 }], fields: [] };
+  assert.deepEqual(getApplicationValidationErrors({ items: [{ criterionId: 'c1', percentage: 55, values: { percentage: 55 } }] }, [bandCriterion]), []);
+  assert.deepEqual(getApplicationValidationErrors({ items: [{ criterionId: 'c1', percentage: '', values: {} }] }, [bandCriterion]), [{ criterionId: 'c1', code: 'custom-percentage' }]);
+  assert.deepEqual(getApplicationValidationErrors({ items: [{ criterionId: 'c1', percentage: 150, values: { percentage: 150 } }] }, [bandCriterion]), [{ criterionId: 'c1', code: 'custom-percentage' }]);
+  // Критерий с вариантами процентов не требует — сумма берётся из варианта.
+  const variantCriterion = { id: 'c2', type: 'custom', scales: [{ key: 'winner', amount: 8000, metadata: { label: 'Победитель' } }], fields: [] };
+  assert.deepEqual(getApplicationValidationErrors({ items: [{ criterionId: 'c2', values: {} }] }, [variantCriterion]), []);
 });

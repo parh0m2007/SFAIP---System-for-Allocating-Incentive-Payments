@@ -130,3 +130,18 @@ test('статус критерия переключается отдельны�
   assert.equal(calls[1].url, 'http://localhost:3001/api/criteria/criterion-1');
   assert.equal(calls[1].options.method, 'DELETE');
 });
+
+test('полное удаление критерия идёт с флагом force', async () => {
+  const calls = [];
+  const api = createApi({ storage: storage(), fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    return response(200, { id: 'criterion-7', purged: true });
+  } });
+
+  await api.purgeCriterion('criterion-7');
+
+  assert.equal(calls[0].url, 'http://localhost:3001/api/criteria/criterion-7?force=true');
+  assert.equal(calls[0].options.method, 'DELETE');
+  await api.criteria.purge('criterion-7');
+  assert.equal(calls[1].url, 'http://localhost:3001/api/criteria/criterion-7?force=true');
+});

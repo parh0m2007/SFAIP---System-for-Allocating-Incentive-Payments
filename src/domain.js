@@ -39,6 +39,27 @@ export const DIPLOMA_TYPES = [
   { id: 'prize', label: 'Призёр' },
 ];
 
+// Справочники олимпиадного критерия настраиваются для каждого критерия свои.
+// Если уровни/степени не заданы, используются стандартные значения.
+const vocabOf = (raw, fallback) => {
+  try {
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) && parsed.length ? parsed : fallback;
+  } catch { return fallback; }
+};
+export const criterionLevels = (criterion) => vocabOf(criterion?.levelsJson, OLYMPIAD_LEVELS);
+export const criterionDiplomas = (criterion) => vocabOf(criterion?.diplomasJson, DIPLOMA_TYPES);
+
+// Процентная шкала пользовательского критерия хранится среди его шкал так же,
+// как шкалы качества обученности: диапазон процентов и выплата. В режиме
+// «по категориям» ключом шкалы служит категория педагога, в режиме «общие
+// проценты» — общий ключ, применяемый к педагогу любой категории.
+export const COMMON_BAND_KEY = 'COMMON';
+const hasBandRange = (scale) => scale?.from != null || scale?.to != null || scale?.fromValue != null || scale?.toValue != null;
+export const hasBandScales = (criterion) => (criterion?.scales || []).some(hasBandRange);
+export const customBandMode = (criterion) =>
+  (criterion?.scales || []).some((scale) => hasBandRange(scale) && CATEGORY_IDS.includes(String(scale.key || '').toLowerCase())) ? 'category' : 'common';
+
 export const calculateReward = ({ maxAmount = 0, requestedAmount = 0 }) =>
   Math.min(Math.max(Number(requestedAmount) || 0, 0), Math.max(Number(maxAmount) || 0));
 
@@ -56,9 +77,14 @@ export const categoryBandScales = (categoryBands = {}) =>
 
 export const criterionUpdatePayload = (criterion, overrides = {}) => {
   const merged = { ...criterion, ...overrides };
-  const scalesSource = merged.categoryBands
-    ? categoryBandScales(merged.categoryBands)
-    : (merged.qualityBands?.length ? merged.qualityBands : (merged.scales || []));
+  // Источник шкал зависит от типа: качество — диапазоны по категориям, олимпиады и
+  // пользовательские — их собственные шкалы. Общий fallback на qualityBands иначе
+  // отправил бы пользовательские варианты в мусорные диапазоны качества.
+  const type = String(merged.type || 'fixed').toUpperCase();
+  const bandsByCategory = Object.values(merged.categoryBands || {}).filter((bands) => bands?.length);
+  const scalesSource = type === 'QUALITY'
+    ? categoryBandScales(bandsByCategory.length ? merged.categoryBands : { subject: merged.qualityBands || [] })
+    : (merged.scales || []);
   return {
     title: merged.title,
     category: merged.category,
@@ -81,6 +107,8 @@ export const criterionUpdatePayload = (criterion, overrides = {}) => {
       if (scale.metadata != null) normalized.metadata = scale.metadata;
       return normalized;
     }),
+    levels: (merged.levels || (merged.levelsJson ? criterionLevels(merged) : [])),
+    diplomas: (merged.diplomas || (merged.diplomasJson ? criterionDiplomas(merged) : [])),
   };
 };
 
@@ -161,6 +189,14 @@ export const getApplicationValidationErrors = (application, criteria = []) => {
       const entries = item.entries || [];
       if (!entries.length || entries.some((entry) => !entry?.studentName?.trim() || !entry?.olympiadName?.trim())) {
         errors.push({ criterionId: item.criterionId, code: 'olympiad-entry' });
+      }
+    }
+    // Процентная шкала пользовательского критерия: процент обязателен — без него
+    // выплату по диапазону определить невозможно (как в качестве обученности).
+    if (criterion?.type === 'custom' && hasBandScales(criterion)) {
+      const percentage = item.percentage;
+      if (percentage === '' || percentage === null || percentage === undefined || !Number.isFinite(Number(percentage)) || Number(percentage) < 0 || Number(percentage) > 100) {
+        errors.push({ criterionId: item.criterionId, code: 'custom-percentage' });
       }
     }
   });

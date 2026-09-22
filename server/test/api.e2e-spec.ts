@@ -177,6 +177,9 @@ test('полный smoke-сценарий: auth, периоды, критери�
   assert.ok(filled.ok, `filled patch failed: ${JSON.stringify(filled.body)}`);
   // fixed 3000 + quality band 75.01-90 => 4000 + olympiad 1500+1800 = 10300
   assert.equal(filled.body.total, 10300, `total mismatch: ${filled.body.total}`);
+  // Каждая запись олимпиады хранит свою выплату — проверяющий видит разбивку итога.
+  const olympiadItem = filled.body.items.find((i: any) => i.criterionId === criterionOlympiadId);
+  assert.deepEqual(olympiadItem.olympiadEntries.map((e: any) => e.amount), [1500, 1800], 'each olympiad entry must store its own payout');
   const submitted = await api(`/api/applications/${applicationId}/submit`, { method: 'POST' });
   assert.ok(submitted.ok, `submit failed: ${JSON.stringify(submitted.body)}`);
   assert.equal(submitted.body.status, 'REVIEW');
@@ -310,6 +313,51 @@ test('полный smoke-сценарий: auth, периоды, критери�
   assert.ok(subjectFilled.ok);
   assert.equal(subjectFilled.body.total, 2000, `subject 72% must give 2000, got ${subjectFilled.body.total}`);
 
+  // 15b. Настраиваемый справочник олимпиадного критерия: баллы ОГЭ/ЕГЭ и ВПР,
+  // начисление за каждого обучающегося по своим уровням и степеням.
+  const examCriterion = await api('/api/criteria', { method: 'POST', token: deputyToken, body: {
+    title: 'E2E баллы экзаменов', category: 'Тест', type: 'OLYMPIAD', maxAmount: 5000,
+    levels: [{ id: 'ege', label: 'ЕГЭ' }, { id: 'vpr', label: 'ВПР (4 класс)' }],
+    diplomas: [{ id: 'score100', label: '100 баллов' }, { id: 'score90', label: '90–99 баллов' }, { id: 'pass', label: 'Положительный результат' }],
+    fields: [], scales: [
+      { key: 'ege:score100', amount: 5000 },
+      { key: 'ege:score90', amount: 3500 },
+      { key: 'vpr:pass', amount: 3000 },
+    ],
+  } });
+  assert.ok(examCriterion.ok, `exam criterion failed: ${JSON.stringify(examCriterion.body)}`);
+  // Шкала, ссылающаяся на незаявленный уровень справочника, отклоняется.
+  const orphanScale = await api('/api/criteria', { method: 'POST', token: deputyToken, body: { title: 'E2E orphan', category: 'Тест', type: 'OLYMPIAD', maxAmount: 5000, levels: [{ id: 'ege', label: 'ЕГЭ' }], diplomas: [{ id: 'score100', label: '100 баллов' }], fields: [], scales: [{ key: 'unknown:score100', amount: 100 }] } });
+  assert.equal(orphanScale.status, 400);
+  assert.equal(orphanScale.body.code, 'SCALES_INVALID');
+  // Учитель заполняет строки учеников из справочника критерия, сумма идёт за каждого.
+  const examTeacher = await api('/api/auth/register', { method: 'POST', body: { email: 'exam@e2e.test', password: 'e2ePass123', fullName: 'E2E Exam Teacher', position: 'Учитель математики', schoolId, role: 'TEACHER', teacherCategory: 'SUBJECT' }, token: false });
+  assert.ok(examTeacher.ok);
+  accessToken = examTeacher.body.accessToken;
+  const examApp = await api('/api/applications', { method: 'POST', body: { periodId } });
+  assert.ok(examApp.ok);
+  const examFilled = await api(`/api/applications/${examApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: examCriterion.body.id, values: {}, entries: [
+    { level: 'ege', diploma: 'score100', studentName: 'Иванов Иван', olympiadName: 'ЕГЭ, математика' },
+    { level: 'vpr', diploma: 'pass', studentName: 'Сидоров Олег', olympiadName: 'ВПР, 4 класс' },
+  ] }] } });
+  assert.ok(examFilled.ok, `exam fill failed: ${JSON.stringify(examFilled.body)}`);
+  // 5000 (100 баллов) + 3000 (ВПР) — за каждого обучающегося.
+  assert.equal(examFilled.body.total, 8000, `exam total must be 8000, got ${examFilled.body.total}`);
+  // Отправка проходит строгую валидацию записей по справочнику критерия.
+  const examSubmitted = await api(`/api/applications/${examApp.body.id}/submit`, { method: 'POST' });
+  assert.ok(examSubmitted.ok, `exam submit failed: ${JSON.stringify(examSubmitted.body)}`);
+  // Запись с уровнем не из справочника критерия отклоняется. regional:winner
+  // есть в стандартном справочтере, но отсутствует у этого критерия — отказ
+  // доказывает, что валидация использует именно справочник критерия.
+  const badTeacher = await api('/api/auth/register', { method: 'POST', body: { email: 'badexam@e2e.test', password: 'e2ePass123', fullName: 'E2E Bad Exam', position: 'Учитель', schoolId, role: 'TEACHER' }, token: false });
+  assert.ok(badTeacher.ok);
+  accessToken = badTeacher.body.accessToken;
+  const badApp = await api('/api/applications', { method: 'POST', body: { periodId } });
+  assert.ok(badApp.ok);
+  const badFill = await api(`/api/applications/${badApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: examCriterion.body.id, values: {}, entries: [{ level: 'regional', diploma: 'winner', studentName: 'Ложный', olympiadName: 'Нет' }] }] } });
+  assert.equal(badFill.status, 400);
+  assert.equal(badFill.body.code, 'OLYMPIAD_ENTRY');
+
   // 16. Утверждённую заявку удалить нельзя, отклонённые и черновики — можно.
   accessToken = deputyToken;
   const lockedDelete = await api(`/api/applications/${applicationId}`, { method: 'DELETE' });
@@ -354,7 +402,158 @@ test('полный smoke-сценарий: auth, периоды, критери�
   assert.equal(badFund.status, 400);
   assert.equal(badFund.body.code, 'FUND_INVALID');
 
-  // 18. Close the period - new applications for it are rejected.
+  // 17b. Детали заявки содержат поля критерия и прикреплённые к элементу документы —
+  // этого достаточно проверяющему, чтобы увидеть, чем и как заполнена заявка.
+  const detail = await api(`/api/applications/${applicationId}`);
+  assert.ok(detail.ok);
+  const fixedItem = detail.body.items.find((i: any) => i.criterionId === criterionFixedId);
+  assert.ok(fixedItem, 'approved application must contain the fixed criterion item');
+  assert.ok(Array.isArray(fixedItem.criterion?.fields), 'item must expose criterion fields for the reviewer');
+  assert.ok(Array.isArray(fixedItem.files), 'item must expose uploaded evidence files');
+  const itemForm = new FormData();
+  itemForm.append('file', new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])], { type: 'application/pdf' }), 'item-proof.pdf');
+  itemForm.append('applicationId', applicationId);
+  itemForm.append('itemId', fixedItem.id);
+  const itemUpload = await api('/api/files', { method: 'POST', body: itemForm });
+  assert.ok(itemUpload.ok, `item upload failed: ${JSON.stringify(itemUpload.body)}`);
+  const detailAfterUpload = await api(`/api/applications/${applicationId}`);
+  const fixedItemAfter = detailAfterUpload.body.items.find((i: any) => i.criterionId === criterionFixedId);
+  assert.equal(fixedItemAfter.files.length, 1, 'uploaded file must be attached to the item');
+
+  // 18. Полное удаление критерия (?force=true): неиспользуемый удаляется насовсем,
+  // использованный в утверждённой заявке блокируется, а черновики очищаются
+  // вместе с критерием с пересчётом суммы.
+  const purgeUnused = await api(`/api/criteria/${freshCriterion.body.id}?force=true`, { method: 'DELETE' });
+  assert.ok(purgeUnused.ok, `purge of unused criterion failed: ${JSON.stringify(purgeUnused.body)}`);
+  assert.equal(purgeUnused.body.purged, true);
+  const afterPurge = await api('/api/criteria');
+  assert.ok(!afterPurge.body.some((c: any) => c.id === freshCriterion.body.id), 'unused criterion must disappear after purge');
+  // Критерий из утверждённой заявки удалить нельзя — история выплат должна сохраниться.
+  const purgeUsed = await api(`/api/criteria/${criterionFixedId}?force=true`, { method: 'DELETE' });
+  assert.equal(purgeUsed.status, 400);
+  assert.equal(purgeUsed.body.code, 'CRITERION_IN_USE');
+  const stillThere = await api('/api/criteria');
+  assert.ok(stillThere.body.some((c: any) => c.id === criterionFixedId), 'in-use criterion must remain');
+  // Мягкое удаление (отключение) остаётся доступным и для использованного критерия.
+  const softDelete = await api(`/api/criteria/${criterionFixedId}`, { method: 'DELETE' });
+  assert.ok(softDelete.ok);
+  assert.equal(softDelete.body.active, false);
+  // Критерий использован только в черновике: удаление вычищает элемент и пересчитывает сумму.
+  const draftCriterion = await api('/api/criteria', { method: 'POST', body: { title: 'E2E черновичный', category: 'Тест', type: 'FIXED', maxAmount: 1000, amount: 500, fields: [], scales: [] } });
+  assert.ok(draftCriterion.ok);
+  const purgeTeacher = await api('/api/auth/register', { method: 'POST', body: student('purgeteacher'), token: false });
+  assert.ok(purgeTeacher.ok, `purge teacher register failed: ${JSON.stringify(purgeTeacher.body)}`);
+  accessToken = purgeTeacher.body.accessToken;
+  const purgeApp = await api('/api/applications', { method: 'POST', body: { periodId } });
+  assert.ok(purgeApp.ok);
+  const purgeFilled = await api(`/api/applications/${purgeApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: draftCriterion.body.id, values: {} }] } });
+  assert.ok(purgeFilled.ok, `purge draft fill failed: ${JSON.stringify(purgeFilled.body)}`);
+  assert.equal(purgeFilled.body.total, 500);
+  accessToken = deputyToken;
+  const purgeDraft = await api(`/api/criteria/${draftCriterion.body.id}?force=true`, { method: 'DELETE' });
+  assert.ok(purgeDraft.ok, `purge of draft-only criterion failed: ${JSON.stringify(purgeDraft.body)}`);
+  const purgeAppAfter = await api(`/api/applications/${purgeApp.body.id}`, { token: purgeTeacher.body.accessToken });
+  assert.ok(purgeAppAfter.ok);
+  assert.equal(purgeAppAfter.body.items.length, 0, 'draft item must be removed together with its criterion');
+  assert.equal(purgeAppAfter.body.total, 0, 'draft total must be recalculated after purge');
+
+  // 18b. Пользовательский критерий с вариантами выплат: учитель выбирает вариант,
+  // сумма считается по выбранному варианту, а не по фиксированной ставке.
+  const customCriterion = await api('/api/criteria', { method: 'POST', body: {
+    title: 'E2E пользовательский', category: 'Тест', type: 'CUSTOM', maxAmount: 10000, amount: 1000,
+    fields: [{ key: 'event', label: 'Мероприятие', type: 'TEXT', required: true }],
+    scales: [
+      { key: 'winner', amount: 8000, metadata: { label: 'Победитель' } },
+      { key: 'prize', amount: 5000, metadata: { label: 'Призёр' } },
+    ],
+    levels: [], diplomas: [],
+  } });
+  assert.ok(customCriterion.ok, `custom criterion failed: ${JSON.stringify(customCriterion.body)}`);
+  const customTeacher = await api('/api/auth/register', { method: 'POST', body: student('custom'), token: false });
+  assert.ok(customTeacher.ok, `custom teacher register failed: ${JSON.stringify(customTeacher.body)}`);
+  accessToken = customTeacher.body.accessToken;
+  const customApp = await api('/api/applications', { method: 'POST', body: { periodId } });
+  assert.ok(customApp.ok);
+  // Вариант не выбран — действует фиксированная сумма по умолчанию.
+  const customDefault = await api(`/api/applications/${customApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: customCriterion.body.id, values: { event: 'Конкурс', scale: '' } }] } });
+  assert.ok(customDefault.ok, `custom default fill failed: ${JSON.stringify(customDefault.body)}`);
+  assert.equal(customDefault.body.total, 1000, `custom default must be 1000, got ${customDefault.body.total}`);
+  // Выбран вариант «Призёр» — 5000.
+  const customVariant = await api(`/api/applications/${customApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: customCriterion.body.id, values: { event: 'Конкурс', scale: 'prize' } }] } });
+  assert.ok(customVariant.ok, `custom variant fill failed: ${JSON.stringify(customVariant.body)}`);
+  assert.equal(customVariant.body.total, 5000, `custom variant must pay 5000, got ${customVariant.body.total}`);
+  // Вариант не из шкалы отклоняется.
+  const badVariant = await api(`/api/applications/${customApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: customCriterion.body.id, values: { event: 'Конкурс', scale: 'nosuchvariant' } }] } });
+  assert.equal(badVariant.status, 400);
+  assert.equal(badVariant.body.code, 'FIELD_INVALID');
+  // Сумма варианта не может превышать максимум критерия.
+  accessToken = deputyToken;
+  const oversizedVariant = await api('/api/criteria', { method: 'POST', body: { title: 'E2E лимит', category: 'Тест', type: 'CUSTOM', maxAmount: 1000, fields: [], scales: [{ key: 'big', amount: 5000, metadata: { label: 'Слишком много' } }], levels: [], diplomas: [] } });
+  assert.equal(oversizedVariant.status, 400);
+  assert.equal(oversizedVariant.body.code, 'SCALES_INVALID');
+
+  // 18c. Пользовательский критерий с процентной шкалой: сумма определяется
+  // диапазоном, в который попал введённый процент. Шкала может быть общей
+  // (одни диапазоны для любой категории педагога) или по категориям.
+  const bandCriterion = await api('/api/criteria', { method: 'POST', body: {
+    title: 'E2E проценты', category: 'Тест', type: 'CUSTOM', maxAmount: 10000,
+    fields: [{ key: 'event', label: 'Мероприятие', type: 'TEXT', required: true }],
+    scales: [
+      { key: 'COMMON', from: 0, to: 60, amount: 2000 },
+      { key: 'COMMON', from: 61, to: 100, amount: 5000 },
+    ],
+    levels: [], diplomas: [],
+  } });
+  assert.ok(bandCriterion.ok, `band criterion failed: ${JSON.stringify(bandCriterion.body)}`);
+  const bandTeacher = await api('/api/auth/register', { method: 'POST', body: { ...student('bands'), teacherCategory: 'SUBJECT' }, token: false });
+  assert.ok(bandTeacher.ok, `band teacher register failed: ${JSON.stringify(bandTeacher.body)}`);
+  accessToken = bandTeacher.body.accessToken;
+  const bandApp = await api('/api/applications', { method: 'POST', body: { periodId } });
+  assert.ok(bandApp.ok);
+  // 45% попадает в первый диапазон — 2000.
+  const bandLow = await api(`/api/applications/${bandApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: bandCriterion.body.id, values: { event: 'Конкурс', percentage: 45 } }] } });
+  assert.ok(bandLow.ok, `band low fill failed: ${JSON.stringify(bandLow.body)}`);
+  assert.equal(bandLow.body.total, 2000, `band 45% must pay 2000, got ${bandLow.body.total}`);
+  // 90% попадает во второй диапазон — 5000.
+  const bandHigh = await api(`/api/applications/${bandApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: bandCriterion.body.id, values: { event: 'Конкурс', percentage: 90 } }] } });
+  assert.ok(bandHigh.ok, `band high fill failed: ${JSON.stringify(bandHigh.body)}`);
+  assert.equal(bandHigh.body.total, 5000, `band 90% must pay 5000, got ${bandHigh.body.total}`);
+  // Черновик можно сохранить без процента, но отправка отклоняется: выплату
+  // по диапазону определить невозможно.
+  const bandDraftNoPercent = await api(`/api/applications/${bandApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: bandCriterion.body.id, values: { event: 'Конкурс' } }] } });
+  assert.ok(bandDraftNoPercent.ok, `band draft without percent must be allowed: ${JSON.stringify(bandDraftNoPercent.body)}`);
+  const bandSubmitNoPercent = await api(`/api/applications/${bandApp.body.id}/submit`, { method: 'POST' });
+  assert.equal(bandSubmitNoPercent.status, 400);
+  assert.equal(bandSubmitNoPercent.body.code, 'PERCENTAGE_REQUIRED');
+  // С процентом заявка отправляется.
+  await api(`/api/applications/${bandApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: bandCriterion.body.id, values: { event: 'Конкурс', percentage: 90 } }] } });
+  const bandSubmit = await api(`/api/applications/${bandApp.body.id}/submit`, { method: 'POST' });
+  assert.ok(bandSubmit.ok, `band submit failed: ${JSON.stringify(bandSubmit.body)}`);
+  // Процентная шкала по категориям: предметник и началка получают разные суммы.
+  accessToken = deputyToken;
+  const categoryBandCriterion = await api('/api/criteria', { method: 'POST', body: {
+    title: 'E2E проценты по категориям', category: 'Тест', type: 'CUSTOM', maxAmount: 10000,
+    fields: [],
+    scales: [
+      { key: 'SUBJECT', from: 0, to: 100, amount: 3000 },
+      { key: 'ELEMENTARY', from: 0, to: 100, amount: 1500 },
+    ],
+    levels: [], diplomas: [],
+  } });
+  assert.ok(categoryBandCriterion.ok, `category band criterion failed: ${JSON.stringify(categoryBandCriterion.body)}`);
+  const bandElemTeacher = await api('/api/auth/register', { method: 'POST', body: { ...student('bandsElem'), teacherCategory: 'ELEMENTARY' }, token: false });
+  assert.ok(bandElemTeacher.ok, `elementary band teacher register failed: ${JSON.stringify(bandElemTeacher.body)}`);
+  accessToken = bandElemTeacher.body.accessToken;
+  const bandElemApp = await api('/api/applications', { method: 'POST', body: { periodId } });
+  assert.ok(bandElemApp.ok);
+  const bandElemFill = await api(`/api/applications/${bandElemApp.body.id}`, { method: 'PATCH', body: { items: [{ criterionId: categoryBandCriterion.body.id, values: { percentage: 80 } }] } });
+  assert.ok(bandElemFill.ok, `elementary band fill failed: ${JSON.stringify(bandElemFill.body)}`);
+  assert.equal(bandElemFill.body.total, 1500, `elementary 80% must pay 1500, got ${bandElemFill.body.total}`);
+  // Возвращаем токен заместителя для последующих шагов сценария.
+  accessToken = deputyToken;
+
+
+  // 19. Close the period - new applications for it are rejected.
   const closed = await api(`/api/periods/${periodId}`, { method: 'PATCH', body: { active: false } });
   assert.ok(closed.ok);
   assert.equal(closed.body.active, false);

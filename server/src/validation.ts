@@ -3,6 +3,15 @@ import { CriterionType, FieldType, Role, TeacherCategory } from '@prisma/client'
 
 const OLYMPIAD_LEVELS = new Set(['municipal', 'regional', 'krai', 'federal', 'all-russian', 'international']);
 const DIPLOMA_TYPES = new Set(['winner', 'prize']);
+const VOCAB_ID_RE = /^[a-zA-Z0-9_-]{1,40}$/;
+const parseVocab = (raw: string | null | undefined, fallback: Set<string>): Set<string> => {
+  try {
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!Array.isArray(parsed)) return fallback;
+    const ids = parsed.map((item: any) => String(item?.id || '')).filter((id: string) => VOCAB_ID_RE.test(id));
+    return ids.length ? new Set(ids) : fallback;
+  } catch { return fallback; }
+};
 const FIELD_TYPES = new Set(Object.values(FieldType));
 const CRITERION_TYPES = new Set(Object.values(CriterionType));
 const TEACHER_CATEGORIES = new Set(Object.values(TeacherCategory));
@@ -105,7 +114,36 @@ export function assertCriterionPayload(payload: any) {
     if (!key) fail('SCALES_INVALID', 'Укажите ключ шкалы');
     if (scaleKeys.has(key)) fail('SCALES_INVALID', `Шкала «${key}» указана повторно`);
     scaleKeys.add(key);
+    // Шкалы без диапазона (варианты пользовательского критерия, олимпиады)
+    // тоже не должны превышать максимум выплаты.
+    if (scale?.amount != null) amount(Number(scale.amount), maxAmount, 'SCALES_INVALID');
   });
+
+  // Настраиваемые справочники олимпиадного критерия: уровни и степени диплома.
+  // Когда справочник задан, каждая шкала должна ссылаться на объявленные элементы.
+  if (type === CriterionType.OLYMPIAD) {
+    const vocab = (items: any) => {
+      if (!Array.isArray(items) || items.length > 50) fail('VOCAB_INVALID', 'Справочник должен содержать до 50 элементов');
+      const ids = new Set<string>();
+      items.forEach((item: any) => {
+        const id = String(item?.id || '').trim();
+        const label = String(item?.label || '').trim();
+        if (!VOCAB_ID_RE.test(id) || ids.has(id) || !label || label.length > 120) fail('VOCAB_INVALID', 'Проверьте идентификаторы и названия справочника');
+        ids.add(id);
+      });
+      return ids;
+    };
+    const levelIds = payload?.levels?.length ? vocab(payload.levels) : null;
+    const diplomaIds = payload?.diplomas?.length ? vocab(payload.diplomas) : null;
+    if (levelIds || diplomaIds) {
+      scales.forEach((scale: any) => {
+        if (scale?.from != null || scale?.to != null) return;
+        const [level, diploma] = String(scale?.key || '').split(':');
+        if (levelIds && !levelIds.has(level)) fail('SCALES_INVALID', `Уровень «${level}» отсутствует в справочнике`);
+        if (diplomaIds && !diplomaIds.has(diploma)) fail('SCALES_INVALID', `Степень «${diploma}» отсутствует в справочнике`);
+      });
+    }
+  }
 }
 
 export function assertCustomFields(fields: any[] = [], values: any = {}, strict = true) {
@@ -119,8 +157,8 @@ export function assertCustomFields(fields: any[] = [], values: any = {}, strict 
   });
 }
 
-export function assertOlympiadEntry(entry: any) {
-  if (!OLYMPIAD_LEVELS.has(String(entry?.level || '')) || !DIPLOMA_TYPES.has(String(entry?.diploma || '')) || String(entry?.studentName || '').trim().length < 2 || String(entry?.olympiadName || '').trim().length < 2) fail('OLYMPIAD_ENTRY', 'Заполните уровень, степень, ФИО ученика и название олимпиады');
+export function assertOlympiadEntry(entry: any, levels: Set<string> = OLYMPIAD_LEVELS, diplomas: Set<string> = DIPLOMA_TYPES) {
+  if (!levels.has(String(entry?.level || '')) || !diplomas.has(String(entry?.diploma || '')) || String(entry?.studentName || '').trim().length < 2 || String(entry?.olympiadName || '').trim().length < 2) fail('OLYMPIAD_ENTRY', 'Заполните уровень, степень, ФИО ученика и название олимпиады');
 }
 
 export function assertApplicationItems(items: any[], criteria: any[], schoolId: string, options: { strict?: boolean } = {}) {
@@ -139,11 +177,24 @@ export function assertApplicationItems(items: any[], criteria: any[], schoolId: 
       if (!strict && values.percentage !== '' && values.percentage != null && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) fail('QUALITY_PERCENTAGE', 'Процент обученности должен быть от 0 до 100');
     }
     if (criterion.type === CriterionType.OLYMPIAD) {
+      const levels = parseVocab(criterion.levelsJson, OLYMPIAD_LEVELS);
+      const diplomas = parseVocab(criterion.diplomasJson, DIPLOMA_TYPES);
       if (strict && (!Array.isArray(item.entries) || !item.entries.length)) fail('OLYMPIAD_ENTRY', 'Добавьте хотя бы одного участника олимпиады');
       if (Array.isArray(item.entries)) item.entries.forEach((entry: any) => {
         if (!strict && !entry?.studentName && !entry?.olympiadName) return;
-        assertOlympiadEntry(entry);
+        assertOlympiadEntry(entry, levels, diplomas);
       });
+    }
+    // Вариант выплаты пользовательского критерия обязан быть из объявленной шкалы.
+    if (criterion.type === CriterionType.CUSTOM && values.scale != null && String(values.scale) !== '' && !(criterion.scales || []).some((scale: any) => scale.key === String(values.scale))) {
+      fail('FIELD_INVALID', `Выберите допустимый вариант выплаты критерия «${criterion.title}»`);
+    }
+    // Процентная шкала пользовательского критерия: если заданы диапазоны,
+    // процент обязателен — без него выплату определить невозможно.
+    if (criterion.type === CriterionType.CUSTOM && (criterion.scales || []).some((scale: any) => scale.fromValue != null && scale.toValue != null)) {
+      const percentage = Number(values.percentage);
+      if (strict && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) fail('PERCENTAGE_REQUIRED', `Укажите процент от 0 до 100 для критерия «${criterion.title}»`);
+      if (!strict && values.percentage !== '' && values.percentage != null && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) fail('PERCENTAGE_REQUIRED', `Процент должен быть от 0 до 100 для критерия «${criterion.title}»`);
     }
   });
 }

@@ -172,6 +172,7 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
     updateCriterion: (id, data) => request(`/api/criteria/${encodeURIComponent(id)}`, { method: 'PATCH', body: data }),
     updateCriterionStatus: (id, active) => request(`/api/criteria/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: { active: Boolean(active) } }),
     deleteCriterion: (id) => request(`/api/criteria/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    purgeCriterion: (id) => request(`/api/criteria/${encodeURIComponent(id)}?force=true`, { method: 'DELETE' }),
     listApplications: () => request('/api/applications'),
     createApplication: (data) => request('/api/applications', { method: 'POST', body: data }),
     getApplication: (id) => request(`/api/applications/${encodeURIComponent(id)}`),
@@ -200,7 +201,7 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
   client.auth = { register: client.register, login: client.login, refresh: client.refresh, logout: client.logout };
   client.schools = { list: client.listSchools };
   client.profile = { get: client.getProfile, update: client.updateProfile };
-  client.criteria = { list: client.listCriteria, create: client.createCriterion, update: client.updateCriterion, updateStatus: client.updateCriterionStatus, delete: client.deleteCriterion };
+  client.criteria = { list: client.listCriteria, create: client.createCriterion, update: client.updateCriterion, updateStatus: client.updateCriterionStatus, delete: client.deleteCriterion, purge: client.purgeCriterion };
   client.periods = { list: client.listPeriods, create: client.createPeriod, close: client.closePeriod, update: client.updatePeriod };
   client.users = { list: client.listUsers };
   client.getCriteria = client.listCriteria;
@@ -224,7 +225,7 @@ export function createApi({ baseUrl, fetchImpl, storage } = {}) {
 export const api = createApi();
 export default api;
 
-export const { register, login, refresh, logout, getProfile, updateProfile, listCriteria, createCriterion, updateCriterion, updateCriterionStatus, deleteCriterion,
+export const { register, login, refresh, logout, getProfile, updateProfile, listCriteria, createCriterion, updateCriterion, updateCriterionStatus, deleteCriterion, purgeCriterion,
   listSchools, listPeriods, createPeriod, closePeriod,
   listUsers,
   listApplications, createApplication, getApplication, updateApplication, submitApplication, deleteApplication, listReviews, approveReview, rejectReview,

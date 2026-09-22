@@ -84,6 +84,19 @@ test('качество обученности зависит от категор
   assert.match(app, /data-profile-category/);
 });
 
+test('конструктор олимпиадного критерия редактирует справочники уровней и степеней', () => {
+  // справочники уровней и степеней подключены в конструктор
+  assert.match(app, /vocabSection\('levels'/);
+  assert.match(app, /vocabSection\('diplomas'/);
+  assert.match(app, /data-add-builder-vocab=/);
+  assert.match(app, /data-builder-vocab-list=/);
+  assert.match(app, /data-vocab-id/);
+  assert.match(app, /data-vocab-label/);
+  // строки учеников берут варианты из справочника своего критерия
+  assert.match(app, /criterion\?\.levels \|\| OLYMPIAD_LEVELS/);
+  assert.match(app, /criterion\?\.diplomas \|\| DIPLOMA_TYPES/);
+});
+
 test('конструктор критериев содержит форму создания и редактирования', () => {
   assert.match(app, /data-action="new-criterion"/);
   assert.match(app, /data-criterion-form/);
@@ -134,9 +147,14 @@ test('поданные заявки сохраняют прежнюю шкалу
   assert.match(app, /Уже отправленные заявки сохранят прежнюю шкалу выплат/);
 });
 
-test('удаление критерия отключает его вместо исчезновения из списка', () => {
-  assert.match(app, /const updated = await api\.deleteCriterion\(c\.id\); Object\.assign\(c, mapCriterion\(updated\)\);/);
-  assert.doesNotMatch(app, /state\.criteria = state\.criteria\.filter\(\(x\) => x\.id !== c\.id\)/);
+test('критерий можно удалить навсегда — он исчезает из списка и черновиков', () => {
+  assert.match(app, /data-purge-criterion/);
+  assert.match(app, /api\.purgeCriterion\(/);
+  // Полное удаление вычищает критерий из состояния и из редактируемых заявок.
+  assert.match(app, /state\.criteria = state\.criteria\.filter\(\(x\) => x\.id !== c\.id\)/);
+  assert.match(app, /a\.items = a\.items\.filter\(\(x\) => x\.criterionId !== c\.id\)/);
+  // Отправленные и утверждённые заявки хранят историю — удалять их критерий нельзя.
+  assert.match(app, /Отправленные и утверждённые заявки хранят/);
 });
 
 test('фильтр и поиск по критериям работают живьём', () => {
@@ -151,8 +169,6 @@ test('критерий можно отключить и вернуть без у
   assert.match(app, /badge\(c\.active \? 'approved' : 'draft'\)/);
   assert.match(app, /data-toggle-criterion/);
   assert.match(app, /api\.updateCriterionStatus\(/);
-  assert.match(app, /data-delete-criterion/);
-  assert.match(app, /api\.deleteCriterion\(/);
 });
 
 test('конструктор не требует ввода JSON для полей и шкал', () => {
@@ -171,6 +187,39 @@ test('новый критерий создаётся без поля для уч
 test('добавление поля сохраняет ранее введённые значения конструктора', () => {
   assert.match(app, /function captureCriterionEditorForm\(/);
   assert.match(app, /captureCriterionEditorForm\(\); criterionEditor\.fields = \[/);
+});
+
+test('кнопки добавления строк конструктора имеют корректные атрибуты', () => {
+  // Лишняя кавычка после имени атрибута (data-add-builder-scale">) превращала его
+  // в атрибут с другим именем — селектор в bind() переставал его находиться,
+  // и кнопка «Добавить строку» в олимпиадном критерии не работала.
+  assert.doesNotMatch(app, /data-add-builder-[a-z]+">/);
+  assert.match(app, /data-add-builder-scale>/);
+  assert.match(app, /data-add-builder-field>/);
+});
+
+test('новый обучающийся получает уровень и степень из справочника критерия', () => {
+  // Захардкоженные municipal/winner отсутствуют в пользовательском справочнике:
+  // строка визуально показывала первый вариант, а выплата считалась как 0.
+  assert.match(app, /const levels = c\?\.levels \|\| OLYMPIAD_LEVELS; const diplomas = c\?\.diplomas \|\| DIPLOMA_TYPES;/);
+  assert.match(app, /level: levels\[0\]\?\.id \|\| 'municipal', diploma: diplomas\[0\]\?\.id \|\| 'winner'/);
+  assert.doesNotMatch(app, /\{ level: 'municipal', diploma: 'winner', studentName: '', olympiadName: '' \}/);
+});
+
+test('устаревшие уровень/степень записи олимпиады заживляются при перерасчёте', () => {
+  assert.match(app, /const levels = criterion\.levels \|\| OLYMPIAD_LEVELS;\s*const diplomas = criterion\.diplomas \|\| DIPLOMA_TYPES;\s*\(item\.entries \|\| \[\]\)\.forEach\(\(entry\) => \{/);
+  assert.match(app, /if \(entry && !levels\.some\(\(l\) => l\.id === entry\.level\)\) entry\.level = levels\[0\]\?\.id \|\| entry\.level;/);
+});
+
+test('при загрузке пересчитываются только редактируемые заявки', () => {
+  // Утверждённые заявки не трогаем — их сумма уже авторитетна на сервере.
+  assert.match(app, /state\.applications\.forEach\(\(a\) => \{ if \(\['draft', 'rejected'\]\.includes\(String\(a\.status \|\| ''\)\.toLowerCase\(\)\)\) recalculateApplication\(a\); \}\);/);
+});
+
+test('пробел и Enter в полях строки критерия не переключают сам критерий', () => {
+  // preventDefault на keydown внутри полей глотал пробел в «Фамилии и имени».
+  assert.match(app, /if \(event\.key !== 'Enter' && event\.key !== ' '\) return; if \(event\.target\.closest\('button, input, select, textarea, label, a'\)\) return; event\.preventDefault\(\); toggle\(event\);/);
+  assert.match(app, /if \(event\.key !== 'Enter' && event\.key !== ' '\) return; if \(event\.target\.closest\('button, input, select, textarea, label, a'\)\) return; event\.preventDefault\(\); open\(event\);/);
 });
 
 test('кастомные поля имеют единое адаптивное оформление', () => {
@@ -347,4 +396,66 @@ test('панели плоские, заголовки таблиц закреп�
   assert.match(styles, /thead th\{position:sticky;top:0;background:#fff;z-index:2/);
   assert.match(styles, /:focus-visible\{outline:2px solid var\(--blue\);outline-offset:2px;border-radius:4px\}/);
   assert.doesNotMatch(styles, /transform:translateY\(-1px\)/);
+});
+
+test('детали заявки показывают заполненные поля каждого критерия', () => {
+  // Поля критерия и файлы сохраняются в элементе заявки при маппинге.
+  assert.match(app, /criterionFields: \(i\.criterion\?\.fields \|\| \[\]\)\.map/);
+  assert.match(app, /files: \(i\.files \|\| \[\]\)\.map\(\(f\) => \(\{ id: f\.id, originalName: f\.originalName/);
+  assert.match(app, /const fields = item\.criterionFields\?\.length \? item\.criterionFields : \(criterion\?\.fields \|\| \[\]\);/);
+  // Значения полей выводятся с подписями из критерия.
+  assert.match(app, /spec-cell/);
+  assert.match(app, /fieldDisplayValue\(f, values\[f\.key\]\)/);
+  // Процент обученности и записи олимпиад видны проверяющему.
+  assert.match(app, /Процент обученности/);
+  assert.match(app, /entry-table/);
+  // Метки уровней берутся из разобранного критерия, а не из сырого levelsJson.
+  assert.match(app, /const levels = criterion\?\.levels \|\| OLYMPIAD_LEVELS;/);
+  assert.match(app, /const diplomas = criterion\?\.diplomas \|\| DIPLOMA_TYPES;/);
+  // Сумма по строке выводится из записи, а при отсутствии — выводится шкалой критерия.
+  assert.match(app, /const entryAmount = \(e\) => Number\(e\.amount\) \|\| getOlympiadReward\(criterion, e\);/);
+});
+
+test('документы заявки скачиваются прямо из панели деталей', () => {
+  assert.match(app, /data-download-file="\$\{f\.id\}"/);
+  assert.match(app, /api\.downloadFile\(el\.dataset\.downloadFile\)/);
+  assert.match(app, /link\.download = el\.dataset\.fileName/);
+  assert.match(styles, /\.file-chip\{[^}]*border-radius:999px/);
+});
+
+test('детали заявки раскрываются на всю ширину под таблицей', () => {
+  assert.match(styles, /\.review-layout\{display:grid;grid-template-columns:minmax\(0,1fr\);gap:15px\}/);
+  assert.match(app, /id="review-detail"/);
+  assert.match(app, /document\.querySelector\('#review-detail'\)\?\.scrollIntoView/);
+});
+
+test('из реестра сотрудников можно открыть заявку на проверку', () => {
+  assert.match(app, /data-select-user="\$\{u\.id\}"/);
+  assert.match(app, /view = 'review'; selectedAppId = app\.id; render\(\);/);
+});
+
+test('пользовательский тип критерия использует только процентные диапазоны', () => {
+  // Конструктор пользовательского критерия не предлагает варианты выплат —
+  // только процентные диапазоны: общие или по категориям педагогов.
+  assert.doesNotMatch(app, /data-scale-kind/);
+  assert.doesNotMatch(app, /data-scale-label/);
+  assert.doesNotMatch(app, /uniqueScaleKeys/);
+  assert.doesNotMatch(app, /data-custom-scale/);
+  assert.doesNotMatch(app, /variants/);
+  // При смене типа на пользовательский появляется первый диапазон на всю шкалу.
+  assert.match(app, /if \(criterionEditor\.type === 'custom'\) \{ criterionEditor\.bandMode = 'common'; criterionEditor\.scales = \[\{ key: COMMON_BAND_KEY, from: 0, to: 100, amount: Number\(criterionEditor\.amount \?\? criterionEditor\.maxAmount\) \|\| 0 \}\]; \}/);
+  // Сумма пользовательского критерия без процентной шкалы — фиксированная.
+  assert.match(app, /item\.amount = criterion\.amount \?\? criterion\.maxAmount;/);
+});
+
+test('пользовательский критерий умеет считать выплату по процентным диапазонам', () => {
+  // Режим процентов выбирается в конструкторе: общие проценты или по категориям
+  // педагогов — как в качестве обученности.
+  assert.match(app, /name="customBandMode" value="common" data-band-mode/);
+  assert.match(app, /name="customBandMode" value="category" data-band-mode/);
+  assert.match(app, /data-scale-band/);
+  assert.match(app, /data-custom-percent="\$\{c\.id\}"/);
+  assert.match(app, /item\.percentage = normalizeQualityPercentage\(el\.value\); recalculateApplication\(a\); persist\('Процент сохранён'\)/);
+  // Расчёт суммы: процентная шкала имеет приоритет над фиксированной суммой.
+  assert.match(app, /if \(hasBandScales\(criterion\)\) \{/);
 });

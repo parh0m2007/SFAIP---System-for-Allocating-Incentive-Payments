@@ -94,6 +94,8 @@ model Criterion {
   active Boolean @default(true)
   version Int @default(1)
   allowEvidence Boolean @default(false)
+  levelsJson String?
+  diplomasJson String?
   fields CriterionField[]
   scales CriterionScale[]
   items ApplicationItem[]

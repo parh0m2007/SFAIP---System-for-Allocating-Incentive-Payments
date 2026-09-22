@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
-import { Body, Controller, Delete, Get, Injectable, Module, Param, Patch, Post, Req, Res, UnauthorizedException, UseGuards, UseInterceptors, UploadedFile, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Injectable, Module, Param, Patch, Post, Query, Req, Res, UnauthorizedException, UseGuards, UseInterceptors, UploadedFile, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PrismaService } from './prisma.service.js';
 import { AuthGuard, Session } from './auth.guard.js';
@@ -155,16 +155,57 @@ export class ApiController {
   async updateCriterionStatus(@Req() req: any, @Param('id') id: string, @Body() b: any) { this.onlyDeputy(req.user); if (typeof b?.active !== 'boolean') throw new BadRequestException({ code: 'STATUS_INVALID', message: 'Укажите статус критерия' }); const c = await this.db.criterion.findFirst({ where: { id, schoolId: req.user.schoolId } }); if (!c) throw new BadRequestException({ code: 'NOT_FOUND', message: 'Критерий не найден' }); const result = await this.db.criterion.update({ where: { id }, data: { active: b.active, version: c.version + 1 }, include: { fields: { orderBy: { order: 'asc' } }, scales: true, _count: { select: { items: true } } } }); await this.audit(req.user.userId, req.user.schoolId, 'CRITERION_STATUS_UPDATE', 'Criterion', id, { active: b.active, version: result.version }); const { _count, ...rest } = result as any; return { ...rest, usageCount: _count.items }; }
 
   @UseGuards(AuthGuard) @Delete('criteria/:id')
-  async deleteCriterion(@Req() req: any, @Param('id') id: string) { this.onlyDeputy(req.user); const c = await this.db.criterion.findFirst({ where: { id, schoolId: req.user.schoolId } }); if (!c) throw new BadRequestException({ code: 'NOT_FOUND', message: 'Критерий не найден' }); const result = await this.db.criterion.update({ where: { id }, data: { active: false }, include: { fields: { orderBy: { order: 'asc' } }, scales: true, _count: { select: { items: true } } } }); await this.audit(req.user.userId, req.user.schoolId, 'CRITERION_DELETE', 'Criterion', id); const { _count, ...rest } = result as any; return { ...rest, usageCount: _count.items }; }
+  async deleteCriterion(@Req() req: any, @Param('id') id: string, @Query('force') force?: string) {
+    this.onlyDeputy(req.user);
+    const c = await this.db.criterion.findFirst({ where: { id, schoolId: req.user.schoolId } });
+    if (!c) throw new BadRequestException({ code: 'NOT_FOUND', message: 'Критерий не найден' });
+    // ?force=true — безвозвратное удаление критерия. Без него критерий лишь
+    // отключается (active: false), оставаясь в истории и конструкторе.
+    if (force === 'true' || force === '1') return this.purgeCriterion(req.user, c);
+    const result = await this.db.criterion.update({ where: { id }, data: { active: false }, include: { fields: { orderBy: { order: 'asc' } }, scales: true, _count: { select: { items: true } } } });
+    await this.audit(req.user.userId, req.user.schoolId, 'CRITERION_DELETE', 'Criterion', id);
+    const { _count, ...rest } = result as any;
+    return { ...rest, usageCount: _count.items };
+  }
+
+  // Полное удаление критерия. Препятствует FK-связь с ApplicationItem: элементы
+  // отправленных (REVIEW) и утверждённых (APPROVED) заявок удалить нельзя — это
+  // сломает очередь проверки и реестр выплат. Такие заявки блокируют удаление,
+  // и заместитель директора должен отключить критерий вместо удаления.
+  // Элементы черновиков и возвращённых заявок удаляются вместе с критерием,
+  // а сумма этих заявок пересчитывается.
+  private async purgeCriterion(user: Session, criterion: any) {
+    const items = await this.db.applicationItem.findMany({ where: { criterionId: criterion.id }, include: { application: { select: { id: true, status: true } } } });
+    const locked = items.filter((item) => item.application.status === ApplicationStatus.REVIEW || item.application.status === ApplicationStatus.APPROVED);
+    if (locked.length) {
+      const noun = locked.length === 1 ? 'заявке' : 'заявках';
+      throw new BadRequestException({ code: 'CRITERION_IN_USE', message: `Критерий использован в ${locked.length} отправленной/утверждённой ${noun}. Отключите его вместо удаления — история и реестр выплат должны быть сохранены.` });
+    }
+    const affectedAppIds = [...new Set(items.map((item) => item.application.id))];
+    await this.db.$transaction(async (tx) => {
+      // Подтверждающие файлы остаются на заявке (itemId обнуляется автоматически),
+      // чтобы учитель не потерял загруженные документы.
+      if (affectedAppIds.length) {
+        await tx.applicationItem.deleteMany({ where: { criterionId: criterion.id, applicationId: { in: affectedAppIds } } });
+        for (const appId of affectedAppIds) {
+          const sum = await tx.applicationItem.aggregate({ where: { applicationId: appId }, _sum: { amount: true } });
+          await tx.application.update({ where: { id: appId }, data: { total: sum._sum.amount || 0 } });
+        }
+      }
+      await tx.criterion.delete({ where: { id: criterion.id } });
+    });
+    await this.audit(user.userId, user.schoolId, 'CRITERION_PURGE', 'Criterion', criterion.id, { removedItems: items.length });
+    return { id: criterion.id, purged: true };
+  }
 
   @UseGuards(AuthGuard) @Get('applications')
-  async listApplications(@Req() req: any) { const where = req.user.role === Role.TEACHER ? { teacherId: req.user.userId } : { schoolId: req.user.schoolId }; return this.db.application.findMany({ where, include: { items: { include: { olympiadEntries: true, files: true } }, period: true, teacher: { select: { id: true, fullName: true, position: true, teacherCategory: true } } }, orderBy: { updatedAt: 'desc' } }); }
+  async listApplications(@Req() req: any) { const where = req.user.role === Role.TEACHER ? { teacherId: req.user.userId } : { schoolId: req.user.schoolId }; return this.db.application.findMany({ where, include: { items: { include: { olympiadEntries: true, files: true, criterion: { include: { fields: { orderBy: { order: 'asc' } } } } } }, period: true, teacher: { select: { id: true, fullName: true, position: true, teacherCategory: true } } }, orderBy: { updatedAt: 'desc' } }); }
 
   @UseGuards(AuthGuard) @Post('applications')
   async createApplication(@Req() req: any, @Body() b: any) { if (req.user.role !== Role.TEACHER) throw new ForbiddenException(); const period = await this.db.period.findFirst({ where: { id: b.periodId || undefined, active: true } }); if (!period) throw new BadRequestException({ code: 'PERIOD_INVALID', message: 'Отчётный период не найден' }); try { return await this.db.application.create({ data: { teacherId: req.user.userId, schoolId: req.user.schoolId, periodId: period.id } }); } catch { throw new BadRequestException({ code: 'ONE_APPLICATION', message: 'На этот период уже есть заявка' }); } }
 
   @UseGuards(AuthGuard) @Get('applications/:id')
-  async getApplication(@Req() req: any, @Param('id') id: string) { const a = await this.db.application.findFirst({ where: { id, ...(req.user.role === Role.TEACHER ? { teacherId: req.user.userId } : { schoolId: req.user.schoolId }) }, include: { items: { include: { olympiadEntries: true, files: true } }, period: true, teacher: { select: { id: true, fullName: true, email: true, role: true, position: true, school: true } } } }); if (!a) throw new BadRequestException({ code: 'NOT_FOUND', message: 'Заявка не найдена' }); return a; }
+  async getApplication(@Req() req: any, @Param('id') id: string) { const a = await this.db.application.findFirst({ where: { id, ...(req.user.role === Role.TEACHER ? { teacherId: req.user.userId } : { schoolId: req.user.schoolId }) }, include: { items: { include: { olympiadEntries: true, files: true, criterion: { include: { fields: { orderBy: { order: 'asc' } } } } } }, period: true, teacher: { select: { id: true, fullName: true, email: true, role: true, position: true, school: true } } } }); if (!a) throw new BadRequestException({ code: 'NOT_FOUND', message: 'Заявка не найдена' }); return a; }
 
   @UseGuards(AuthGuard) @Patch('applications/:id')
   async patchApplication(@Req() req: any, @Param('id') id: string, @Body() b: any) {
@@ -281,11 +322,35 @@ export class ApiController {
     return value;
   }
   private async issueTokens(user: any) { const refreshToken = jwt.sign({ userId: user.id, nonce: randomBytes(8).toString('hex') }, refreshSecret(), { expiresIn: '30d' }); await this.db.refreshToken.create({ data: { tokenHash: await bcrypt.hash(refreshToken, 10), userId: user.id, expiresAt: new Date(Date.now() + 30 * 86400000) } }); return { accessToken: signAccess(user), refreshToken, user: publicUser(user) }; }
-  private async saveCriterion(schoolId: string, b: any, id?: string, version = 1) { const normalized = { ...b, type: String(b?.type || '').toUpperCase(), title: String(b?.title || '').trim(), category: String(b?.category || 'Другое').trim(), maxAmount: Number(b?.maxAmount), amount: b?.amount == null || b?.amount === '' ? null : Number(b.amount), fields: Array.isArray(b?.fields) ? b.fields : [], scales: Array.isArray(b?.scales) ? b.scales : [] }; assertCriterionPayload(normalized); const maxAmount = normalized.maxAmount; const rawAmount = normalized.amount == null ? (normalized.type === CriterionType.FIXED ? maxAmount : null) : normalized.amount; const data: any = { title: normalized.title, category: normalized.category, type: normalized.type, amount: rawAmount == null ? null : Math.min(rawAmount, maxAmount), maxAmount, allowEvidence: Boolean(normalized.allowEvidence), version, fields: { create: normalized.fields.map((f: any, idx: number) => ({ key: String(f.key).trim(), label: String(f.label).trim(), type: String(f.type || FieldType.TEXT).toUpperCase(), required: Boolean(f.required), order: idx, optionsJson: f.options ? JSON.stringify(f.options) : f.optionsJson || null })) }, scales: { create: normalized.scales.map((s: any) => ({ key: s.key || randomUUID(), fromValue: s.from == null ? null : Number(s.from), toValue: s.to == null ? null : Number(s.to), amount: Number(s.amount), metadataJson: s.metadata ? JSON.stringify(s.metadata) : null })) } }; const include = { fields: { orderBy: { order: 'asc' as const } }, scales: true, _count: { select: { items: true } } }; const withUsage = (criterion: any) => { const { _count, ...rest } = criterion; return { ...rest, usageCount: _count.items }; }; if (id) { await this.db.criterionField.deleteMany({ where: { criterionId: id } }); await this.db.criterionScale.deleteMany({ where: { criterionId: id } }); return withUsage(await this.db.criterion.update({ where: { id }, data, include })); } return withUsage(await this.db.criterion.create({ data: { ...data, schoolId }, include })); }
+  private async saveCriterion(schoolId: string, b: any, id?: string, version = 1) { const normalized = { ...b, type: String(b?.type || '').toUpperCase(), title: String(b?.title || '').trim(), category: String(b?.category || 'Другое').trim(), maxAmount: Number(b?.maxAmount), amount: b?.amount == null || b?.amount === '' ? null : Number(b.amount), fields: Array.isArray(b?.fields) ? b.fields : [], scales: Array.isArray(b?.scales) ? b.scales : [], levels: Array.isArray(b?.levels) ? b.levels : [], diplomas: Array.isArray(b?.diplomas) ? b.diplomas : [] }; assertCriterionPayload(normalized); const maxAmount = normalized.maxAmount; const rawAmount = normalized.amount == null ? (normalized.type === CriterionType.FIXED ? maxAmount : null) : normalized.amount; const data: any = { title: normalized.title, category: normalized.category, type: normalized.type, amount: rawAmount == null ? null : Math.min(rawAmount, maxAmount), maxAmount, allowEvidence: Boolean(normalized.allowEvidence), version, levelsJson: normalized.levels.length ? JSON.stringify(normalized.levels) : null, diplomasJson: normalized.diplomas.length ? JSON.stringify(normalized.diplomas) : null, fields: { create: normalized.fields.map((f: any, idx: number) => ({ key: String(f.key).trim(), label: String(f.label).trim(), type: String(f.type || FieldType.TEXT).toUpperCase(), required: Boolean(f.required), order: idx, optionsJson: f.options ? JSON.stringify(f.options) : f.optionsJson || null })) }, scales: { create: normalized.scales.map((s: any) => ({ key: s.key || randomUUID(), fromValue: s.from == null ? null : Number(s.from), toValue: s.to == null ? null : Number(s.to), amount: Number(s.amount), metadataJson: s.metadata ? JSON.stringify(s.metadata) : null })) } }; const include = { fields: { orderBy: { order: 'asc' as const } }, scales: true, _count: { select: { items: true } } }; const withUsage = (criterion: any) => { const { _count, ...rest } = criterion; return { ...rest, usageCount: _count.items }; }; if (id) { await this.db.criterionField.deleteMany({ where: { criterionId: id } }); await this.db.criterionScale.deleteMany({ where: { criterionId: id } }); return withUsage(await this.db.criterion.update({ where: { id }, data, include })); } return withUsage(await this.db.criterion.create({ data: { ...data, schoolId }, include })); }
   private async getWritableApplication(u: Session, id: string) { const a = await this.db.application.findFirst({ where: { id, schoolId: u.schoolId, ...(u.role === Role.TEACHER ? { teacherId: u.userId } : {}) } }); if (!a) throw new BadRequestException({ code: 'NOT_FOUND', message: 'Заявка не найдена' }); if (u.role === Role.TEACHER && a.status !== ApplicationStatus.DRAFT && a.status !== ApplicationStatus.REJECTED) throw new BadRequestException({ code: 'STATUS_LOCKED', message: 'Заявка уже отправлена на проверку' }); return a; }
-  private calculateItem(i: any, c: any, category?: string | null) { if (!c) throw new BadRequestException({ code: 'CRITERION_INVALID', message: 'Критерий недоступен' }); const values = i.values || {}; let amount = 0; if (c.type === CriterionType.QUALITY) { const p = Number(values.percentage); const ranges = c.scales.filter((x: any) => x.fromValue != null && x.toValue != null); // Шкалы качества сгруппированы по категории педагога. Если шкал для категории
+  private calculateItem(i: any, c: any, category?: string | null) { if (!c) throw new BadRequestException({ code: 'CRITERION_INVALID', message: 'Критерий недоступен' }); const values = i.values || {}; let amount = 0; let entries = i.entries || [];
+    if (c.type === CriterionType.QUALITY) { const p = Number(values.percentage); const ranges = c.scales.filter((x: any) => x.fromValue != null && x.toValue != null); // Шкалы качества сгруппированы по категории педагога. Если шкал для категории
       // нет, используются шкалы без категории (например, созданные до обновления).
-      const scoped = ranges.filter((x: any) => x.key === category); const pool = scoped.length ? scoped : ranges.filter((x: any) => !x.key); const matches = (pool.length ? pool : ranges).filter((x: any) => p >= (x.fromValue ?? -Infinity) && p <= (x.toValue ?? Infinity)).sort((a: any, b: any) => (b.fromValue ?? -Infinity) - (a.fromValue ?? -Infinity)); amount = matches[0]?.amount || 0; } else if (c.type === CriterionType.OLYMPIAD) { amount = (i.entries || []).reduce((sum: number, e: any) => sum + (c.scales.find((s: any) => s.key === `${e.level}:${e.diploma}`)?.amount || 0), 0); } else amount = c.amount ?? c.maxAmount; return { criterionId: c.id, criterionVersion: c.version, titleSnapshot: c.title, amount, values, entries: i.entries || [] }; }
+      const scoped = ranges.filter((x: any) => x.key === category); const pool = scoped.length ? scoped : ranges.filter((x: any) => !x.key); const matches = (pool.length ? pool : ranges).filter((x: any) => p >= (x.fromValue ?? -Infinity) && p <= (x.toValue ?? Infinity)).sort((a: any, b: any) => (b.fromValue ?? -Infinity) - (a.fromValue ?? -Infinity)); amount = matches[0]?.amount || 0; }
+    else if (c.type === CriterionType.OLYMPIAD) {
+      // Сумма выплаты начисляется по каждой записи ученика, чтобы проверяющий
+      // видел разбивку итоговой суммы по участникам, а не только общий итог.
+      entries = entries.map((e: any) => ({ ...e, amount: Number(c.scales.find((s: any) => s.key === `${e.level}:${e.diploma}`)?.amount || 0) }));
+      amount = entries.reduce((sum: number, e: any) => sum + (Number(e.amount) || 0), 0);
+    } else if (c.type === CriterionType.CUSTOM) {
+      // Пользовательский критерий: если заданы процентные диапазоны — сумма
+      // определяется диапазоном, в который попал введённый процент (с учётом
+      // категории педагога, как в качестве обученности). Иначе — по выбранному
+      // варианту выплаты, а если вариант не выбран, фиксированная сумма.
+      const ranges = (c.scales || []).filter((x: any) => x.fromValue != null && x.toValue != null);
+      if (ranges.length) {
+        const p = Number(values.percentage);
+        const scoped = ranges.filter((x: any) => x.key === category);
+        const pool = scoped.length ? scoped : ranges.filter((x: any) => !x.key);
+        const matches = (pool.length ? pool : ranges).filter((x: any) => p >= (x.fromValue ?? -Infinity) && p <= (x.toValue ?? Infinity)).sort((a: any, b: any) => (b.fromValue ?? -Infinity) - (a.fromValue ?? -Infinity));
+        amount = matches[0]?.amount || 0;
+      } else {
+        const scaleKey = String(values.scale || '');
+        const variant = scaleKey ? c.scales.find((s: any) => s.key === scaleKey) : null;
+        amount = variant ? Number(variant.amount) : (c.amount ?? c.maxAmount);
+      }
+    } else amount = c.amount ?? c.maxAmount; return { criterionId: c.id, criterionVersion: c.version, titleSnapshot: c.title, amount, values, entries }; }
   private async decide(u: Session, id: string, status: ApplicationStatus, comment = '') { const a = await this.db.application.findFirst({ where: { id, schoolId: u.schoolId, status: ApplicationStatus.REVIEW } }); if (!a) throw new BadRequestException({ code: 'STATUS_INVALID', message: 'Заявка не находится на проверке' }); const updated = await this.db.application.update({ where: { id }, data: { status, comment: status === ApplicationStatus.REJECTED ? comment.trim() : null, decidedAt: new Date() } }); await this.db.notification.create({ data: { userId: a.teacherId, type: status.toLowerCase(), title: status === ApplicationStatus.APPROVED ? 'Заявка утверждена' : 'Нужно исправить заявку', body: status === ApplicationStatus.APPROVED ? `Сумма выплаты: ${a.total} ₽` : comment, link: `/applications/${a.id}` } }); await this.audit(u.userId, u.schoolId, status === ApplicationStatus.APPROVED ? 'APPLICATION_APPROVE' : 'APPLICATION_REJECT', 'Application', a.id, { comment: comment || undefined }); return updated; }
   private async audit(userId: string | null, schoolId: string | null, action: string, entity: string, entityId?: string, details?: any) { await this.db.auditLog.create({ data: { userId: userId || undefined, schoolId: schoolId || undefined, action, entity, entityId, detailsJson: details ? JSON.stringify(details) : undefined } }); }
 }

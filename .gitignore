@@ -10,3 +10,7 @@ storage/
 
 # graphify local graph artifacts
 graphify-out/
+
+# manual verification artifacts (headless-Chrome harnesses and screenshots)
+__preview*.html
+screenshot.png
