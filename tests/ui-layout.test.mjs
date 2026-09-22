@@ -459,3 +459,9 @@ test('пользовательский критерий умеет считат�
   // Расчёт суммы: процентная шкала имеет приоритет над фиксированной суммой.
   assert.match(app, /if \(hasBandScales\(criterion\)\) \{/);
 });
+
+test('index.html разрешает базовый URL API по хосту — на проде тот же origin, локально :3001', () => {
+  // Без этого скрипта api.js уходит на http://localhost:3001 даже на проде,
+  // и запросы падают с ERR_CONNECTION_REFUSED.
+  assert.match(index, /window\.API_BASE_URL = \['localhost', '127\.0\.0\.1'\]\.includes\(location\.hostname\) \? 'http:\/\/localhost:3001' : '\/';/);
+});

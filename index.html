@@ -10,6 +10,11 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="src/styles.css" />
+    <script>
+      // In Docker prod, nginx serves the API on the same origin (/api);
+      // locally the API runs on port 3001. Resolve before the app module loads.
+      window.API_BASE_URL = ['localhost', '127.0.0.1'].includes(location.hostname) ? 'http://localhost:3001' : '/';
+    </script>
   </head>
   <body>
     <div id="app"></div>
